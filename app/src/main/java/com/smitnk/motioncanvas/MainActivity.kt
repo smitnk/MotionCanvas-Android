@@ -47,6 +47,7 @@ import androidx.compose.ui.input.pointer.awaitEachGesture
 import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -144,12 +145,32 @@ fun MotionCanvasApp() {
     var scale by remember { mutableFloatStateOf(1f) }
     var rotation by remember { mutableFloatStateOf(0f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
+    var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size(rasterWidth.toFloat(), rasterHeight.toFloat())) }
     var onionSkin by remember { mutableStateOf(true) }
     var fps by remember { mutableIntStateOf(12) }
     var frameIndex by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf("") }
     val context = LocalContext.current
+
+    fun artScale(): Float {
+        if (canvasSize.width <= 0f || canvasSize.height <= 0f) return 1f
+        return minOf(canvasSize.width / rasterWidth.toFloat(), canvasSize.height / rasterHeight.toFloat()) * 0.92f
+    }
+
+    fun screenToArt(p: Offset): Offset {
+        val base = artScale()
+        val cx = canvasSize.width / 2f + pan.x
+        val cy = canvasSize.height / 2f + pan.y
+        val dx = p.x - cx
+        val dy = p.y - cy
+        val r = -rotation * PI.toFloat() / 180f
+        val c = cos(r); val s = sin(r)
+        return Offset(
+            (dx * c - dy * s) / (base * scale) + rasterWidth / 2f,
+            (dx * s + dy * c) / (base * scale) + rasterHeight / 2f
+        )
+    }
 
     fun copyBitmap(source: Bitmap): Bitmap = source.copy(Bitmap.Config.ARGB_8888, true)
 
@@ -609,18 +630,15 @@ fun MotionCanvasApp() {
                     }
             ) {
                 Canvas(
-                    Modifier.fillMaxSize().graphicsLayer(
-                        scaleX = scale, scaleY = scale, rotationZ = rotation,
-                        translationX = pan.x, translationY = pan.y
-                    ).pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, pressureEnabled, spacing, taper) {
+                    Modifier.fillMaxSize().onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, pressureEnabled, spacing, taper) {
                         detectDragGestures(
                             onDragStart = { start ->
                                 current = listOf(start)
                                 if (tool == Tool.SELECT) selection = listOf(start)
                             },
                             onDrag = { change, _ ->
-                                current = current + change.position
-                                if (tool == Tool.SELECT) selection = selection + change.position
+                                current = current + screenToArt(change.position)
+                                if (tool == Tool.SELECT) selection = selection + screenToArt(change.position)
                             },
                             onDragEnd = {
                                 if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
@@ -629,6 +647,11 @@ fun MotionCanvasApp() {
                         )
                     }
                 ) {
+                    val baseScale = artScale()
+                    translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y) {
+                        rotate(rotation) {
+                            scale(baseScale * scale, baseScale * scale, Offset.Zero) {
+                                translate(left = -rasterWidth / 2f, top = -rasterHeight / 2f) {
                     if (onionSkin && frameIndex > 0) {
                         frameData[frameIndex - 1].layers.forEach { layer ->
                             layer.strokes.forEach { s -> drawStroke(this, s, Color.Red.copy(alpha = 0.14f)) }
@@ -675,6 +698,10 @@ fun MotionCanvasApp() {
                             Stroke(preview, emptyList(), if (tool == Tool.ERASER) Color.White else brush, width, opacity,
                                 closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE)
                         )
+                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
