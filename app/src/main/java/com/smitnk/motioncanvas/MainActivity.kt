@@ -1,6 +1,9 @@
 package com.smitnk.motioncanvas
 
 import android.os.Bundle
+import android.content.ContentValues
+import android.provider.MediaStore
+import android.graphics.Bitmap.CompressFormat
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint as AndroidPaint
@@ -36,6 +39,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.awaitEachGesture
 import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -138,8 +142,34 @@ fun MotionCanvasApp() {
     var fps by remember { mutableIntStateOf(12) }
     var frameIndex by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
+    var exportStatus by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     fun copyBitmap(source: Bitmap): Bitmap = source.copy(Bitmap.Config.ARGB_8888, true)
+
+    fun exportCurrentPng() {
+        val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(merged)
+        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+        rasterLayers.forEachIndexed { i, bitmap ->
+            if (layers.getOrNull(i)?.visible == true) {
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                paint.alpha = (layers[i].opacity.coerceIn(0f, 1f) * 255f).toInt()
+                canvas.drawBitmap(bitmap, 0f, 0f, paint)
+            }
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "MotionCanvas_F${frameIndex + 1}.png")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/MotionCanvas")
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri == null) { exportStatus = "Export failed"; return }
+        resolver.openOutputStream(uri)?.use { merged.compress(CompressFormat.PNG, 100, it) }
+        merged.recycle()
+        exportStatus = "PNG exported to Pictures/MotionCanvas"
+    }
 
     fun saveRasterFrame() {
         rasterFrames = rasterFrames.toMutableList().also { it[frameIndex] = rasterLayers.map { bitmap -> copyBitmap(bitmap) } }
@@ -440,6 +470,7 @@ fun MotionCanvasApp() {
         TopAppBar(
             title = { Text("MotionCanvas") },
             actions = {
+                TextButton(onClick = { exportCurrentPng() }) { Text("Export PNG") }
                 TextButton(enabled = undo.isNotEmpty(), onClick = {
                     val previous = undo.last()
                     redo = (redo + EditorSnapshot(currentStrokes, rasterLayers.map { copyBitmap(it) })).takeLast(20)
@@ -651,6 +682,8 @@ fun MotionCanvasApp() {
                 }
             }
         }
+
+        if (exportStatus.isNotEmpty()) Text(exportStatus, modifier = Modifier.padding(horizontal = 8.dp))
 
         Row(Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Button(onClick = ::addFrame) { Text("+ Frame") }
