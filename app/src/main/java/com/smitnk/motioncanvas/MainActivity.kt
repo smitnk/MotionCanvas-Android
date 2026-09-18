@@ -180,6 +180,8 @@ fun MotionCanvasApp() {
     var perspectivePoints by remember { mutableIntStateOf(1) }
     var pingPong by remember { mutableStateOf(false) }
     var playDirection by remember { mutableIntStateOf(1) }
+    var timelineLoopMode by remember { mutableStateOf(TimelineLoopMode.LOOP) }
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
     data class EditorSnapshot(
         val strokes: List<List<Stroke>>,
         val rasters: List<Bitmap>
@@ -787,19 +789,23 @@ fun MotionCanvasApp() {
         layers = layers.toMutableList().also { it[index] = it[index].copy(visible = !it[index].visible) }
     }
 
-    LaunchedEffect(playing, fps, frameData.size, pingPong) {
-        while (playing) {
-            delay(1000L / fps)
-            val next = frameIndex + playDirection
-            if (next >= frameData.size || next < 0) {
-                if (pingPong && frameData.size > 1) {
-                    playDirection = -playDirection
-                    loadFrame((frameIndex + playDirection).coerceIn(0, frameData.lastIndex))
-                } else {
-                    playDirection = 1
-                    loadFrame(0)
-                }
-            } else loadFrame(next)
+    LaunchedEffect(playing, fps, frameData.size, pingPong, timelineLoopMode, playbackSpeed, frameIndex) {
+        while (playing && frameData.isNotEmpty()) {
+            val mode = if (pingPong) TimelineLoopMode.PING_PONG else timelineLoopMode
+            val state = TimelineState(
+                frame = frameIndex,
+                playing = true,
+                direction = playDirection,
+                fps = fps,
+                speed = playbackSpeed,
+                loopMode = mode
+            )
+            val hold = frameData.getOrNull(frameIndex)?.layers?.firstOrNull()?.hold?.coerceAtLeast(1) ?: 1
+            delay(state.frameDelayMillis() * hold)
+            val nextState = state.nextFrame(frameData.size)
+            playDirection = nextState.direction
+            if (!nextState.playing) playing = false
+            loadFrame(nextState.frame.coerceIn(0, frameData.lastIndex))
         }
     }
 
@@ -1359,9 +1365,14 @@ fun MotionCanvasApp() {
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = { playing = !playing }) { Text(if (playing) "Pause" else "Play") }
-            FilterChip(pingPong, { pingPong = !pingPong }, label = { Text("Ping-Pong") })
+            FilterChip(timelineLoopMode == TimelineLoopMode.LOOP && !pingPong, { timelineLoopMode = TimelineLoopMode.LOOP; pingPong = false }, label = { Text("Loop") })
+            FilterChip(timelineLoopMode == TimelineLoopMode.ONCE, { timelineLoopMode = TimelineLoopMode.ONCE; pingPong = false }, label = { Text("Once") })
+            FilterChip(timelineLoopMode == TimelineLoopMode.PING_PONG || pingPong, { timelineLoopMode = TimelineLoopMode.PING_PONG; pingPong = true }, label = { Text("Ping-Pong") })
             Text("FPS " + fps, Modifier.padding(horizontal = 4.dp))
             listOf(8, 12, 24).forEach { rate -> Button(onClick = { fps = rate }) { Text(rate.toString()) } }
+            Button(onClick = { playbackSpeed = (playbackSpeed - 0.25f).coerceAtLeast(0.25f) }) { Text("−Speed") }
+            Text(String.format("%.2fx", playbackSpeed), Modifier.padding(horizontal = 2.dp))
+            Button(onClick = { playbackSpeed = (playbackSpeed + 0.25f).coerceAtMost(4f) }) { Text("+Speed") }
             Button(onClick = { setHold((frameData[frameIndex].layers.firstOrNull()?.hold ?: 1) + 1) }) { Text("Hold+") }
             Button(onClick = { setHold(1) }) { Text("Hold 1") }
         }
