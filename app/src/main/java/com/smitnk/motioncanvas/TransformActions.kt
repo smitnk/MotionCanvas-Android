@@ -25,12 +25,21 @@ object TransformActions {
         selection: StrokeSelection,
         mapper: (Offset, Offset) -> Offset
     ): List<Stroke> {
+        fun mapHandle(handle: Offset): Offset = when {
+            mapper(Offset(handle.x, 0f), Offset.Zero).x == -handle.x &&
+                mapper(Offset(0f, handle.y), Offset.Zero).y == handle.y -> Offset(-handle.x, handle.y)
+            else -> Offset(handle.x, -handle.y)
+        }
         if (!selection.active) return strokes
         val center = selection.transformBox?.center ?: return strokes
         val selected = selection.indices.toSet()
         return strokes.mapIndexed { index, stroke ->
             if (index !in selected) stroke
-            else stroke.copy(points = stroke.points.map { mapper(it, center) })
+            else stroke.copy(
+                points = stroke.points.map { mapper(it, center) },
+                inHandles = stroke.inHandles.map { handle -> mapHandle(handle) },
+                outHandles = stroke.outHandles.map { handle -> mapHandle(handle) }
+            )
         }
     }
 }
