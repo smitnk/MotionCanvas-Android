@@ -159,6 +159,10 @@ fun MotionCanvasApp() {
     var weightRadius by remember { mutableFloatStateOf(180f) }
     var weightStrength by remember { mutableFloatStateOf(0.75f) }
     var weightJoints by remember { mutableStateOf(listOf<Offset>()) }
+    var rigJoints by remember { mutableStateOf(listOf<Offset>()) }
+    var rigParents by remember { mutableStateOf(listOf<Int>()) }
+    var rigMode by remember { mutableStateOf(false) }
+    var rigSelected by remember { mutableIntStateOf(-1) }
     var sculptMode by remember { mutableStateOf(false) }
     var sculptTool by remember { mutableStateOf("Grab") }
     var sculptRadius by remember { mutableFloatStateOf(140f) }
@@ -483,6 +487,38 @@ fun MotionCanvasApp() {
             editStrokeIndex = null
             editNodeIndex = -1
         }
+    }
+
+    fun addRigJoint(point: Offset) {
+        rigJoints = rigJoints + point
+        rigParents = rigParents + if (rigJoints.isEmpty()) -1 else rigSelected
+        rigSelected = rigJoints.lastIndex
+    }
+
+    fun moveRigJoint(index: Int, point: Offset) {
+        if (index !in rigJoints.indices) return
+        val delta = point - rigJoints[index]
+        rigJoints = rigJoints.toMutableList().also { it[index] = point }
+        if (delta == Offset.Zero) return
+        val strokeIndex = editStrokeIndex ?: return
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (strokeIndex !in strokes.indices) return
+        val stroke = strokes[strokeIndex]
+        val moved = stroke.points.map { p ->
+            val d = p - point
+            val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
+            val influence = (1f - dist / weightRadius).coerceIn(0f, 1f) * weightStrength
+            p + delta * influence
+        }
+        currentStrokes = currentStrokes.toMutableList().also { layersList ->
+            layersList[selectedLayer] = strokes.toMutableList().also { it[strokeIndex] = stroke.copy(points = moved) }
+        }
+    }
+
+    fun resetRig() {
+        rigJoints = emptyList()
+        rigParents = emptyList()
+        rigSelected = -1
     }
 
     fun ensureWeightJoints() {
@@ -1096,7 +1132,12 @@ fun MotionCanvasApp() {
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
                                 if (editStrokeIndex != null) {
-                                    if (nodeEditorMode && bezierHandleMode) {
+                                    if (rigMode) {
+                                            var nearest = -1
+                                            var bd = 42f * 42f
+                                            rigJoints.forEachIndexed { i, p -> val d = (p - artStart).let { it.x*it.x + it.y*it.y }; if (d < bd) { bd=d; nearest=i } }
+                                            rigSelected = nearest
+                                        } else if (nodeEditorMode && bezierHandleMode) {
                                         val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)?.points.orEmpty()
                                         var bestNode = -1
                                         var bestDist = Float.MAX_VALUE
@@ -1136,7 +1177,9 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
+                                if (rigMode && rigSelected >= 0) {
+                                    moveRigJoint(rigSelected, artPoint)
+                                } else if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
                                     updateBezierHandle(artPoint, activeHandleSide)
                                 } else if (editStrokeIndex != null && sculptMode) {
                                     sculptStroke(artPoint, change.position - change.previousPosition)
@@ -1223,6 +1266,15 @@ fun MotionCanvasApp() {
                         }
                     }
 
+                    if (rigMode && rigJoints.isNotEmpty()) {
+                        rigJoints.forEachIndexed { i, p ->
+                            val parent = rigParents.getOrNull(i) ?: -1
+                            if (parent in rigJoints.indices) drawLine(Color.Cyan, rigJoints[parent], p, 4f)
+                            drawCircle(if (i == rigSelected) Color.Yellow else Color.Cyan, 14f, p)
+                            drawCircle(Color.DarkGray, 5f, p)
+                        }
+                    }
+
                     if (nodeEditorMode && bezierHandleMode && editStrokeIndex != null) {
                         val s = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)
                         if (s != null) {
@@ -1293,6 +1345,11 @@ fun MotionCanvasApp() {
                             Text(if (weightPaintMode) "Weight Pose" else editShapeLabel)
                         }
                         if (weightPaintMode) Text("Drag joints to pose", modifier = Modifier.padding(top = 12.dp))
+                            Button(onClick = { rigMode = !rigMode }) { Text(if (rigMode) "Rig On" else "Rig") }
+                            if (rigMode) {
+                                Button(onClick = { resetRig() }) { Text("Reset Rig") }
+                                Button(onClick = { val p = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex ?: -1)?.points?.firstOrNull(); if (p != null) addRigJoint(p) }) { Text("Add Joint") }
+                            }
                         if (!weightPaintMode && !sculptMode) {
                             Button(onClick = { nodeEditorMode = !nodeEditorMode }) { Text(if (nodeEditorMode) "Nodes On" else "Nodes") }
                             Button(onClick = { addEditNode() }, enabled = nodeEditorMode) { Text("Add") }
