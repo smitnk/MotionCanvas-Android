@@ -1358,6 +1358,7 @@ fun MotionCanvasApp() {
                         }
                     }
                 }
+                }
                 if (editStrokeIndex != null) {
                     Row(
                         Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
@@ -1380,7 +1381,6 @@ fun MotionCanvasApp() {
                             Button(onClick = { bezierHandleMode = !bezierHandleMode }, enabled = nodeEditorMode) { Text(if (bezierHandleMode) "Bezier On" else "Bezier") }
                         }
                     }
-                }
                 }
             }
 
