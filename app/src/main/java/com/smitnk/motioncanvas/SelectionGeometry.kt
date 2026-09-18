@@ -18,7 +18,17 @@ data class SelectionBounds(
 
 object SelectionGeometry {
     fun strokeBounds(strokes: List<Stroke>): SelectionBounds? {
-        val points = strokes.flatMap { it.points }
+        val points = strokes.flatMap { stroke ->
+            buildList {
+                addAll(stroke.points)
+                if (stroke.inHandles.size == stroke.points.size) {
+                    stroke.points.forEachIndexed { i, p -> add(p + stroke.inHandles[i]) }
+                }
+                if (stroke.outHandles.size == stroke.points.size) {
+                    stroke.points.forEachIndexed { i, p -> add(p + stroke.outHandles[i]) }
+                }
+            }
+        }
         if (points.isEmpty()) return null
 
         var minX = points.first().x
