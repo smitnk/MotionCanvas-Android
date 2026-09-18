@@ -811,18 +811,23 @@ fun MotionCanvasApp() {
 
     fun renderFrameBitmap(index: Int): Bitmap {
         val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
-        val canvas = AndroidCanvas(merged)
-        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        rasterFrames.getOrNull(index)?.forEachIndexed { i, bitmap ->
-            if (layers.getOrNull(i)?.visible == true) {
+        val mergedCanvas = AndroidCanvas(merged)
+        mergedCanvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+
+        val frame = frameData.getOrNull(index)
+        val rasterFrame = rasterFrames.getOrNull(index)
+
+        fun renderLayerBitmap(layerIndex: Int): Bitmap {
+            val layerBitmap = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+            val layerCanvas = AndroidCanvas(layerBitmap)
+            layerCanvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+
+            rasterFrame?.getOrNull(layerIndex)?.let { bitmap ->
                 val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-                paint.alpha = (layers[i].opacity.coerceIn(0f, 1f) * 255f).toInt()
-                canvas.drawBitmap(bitmap, 0f, 0f, paint)
+                layerCanvas.drawBitmap(bitmap, 0f, 0f, paint)
             }
-        }
-        frameData.getOrNull(index)?.layers?.forEachIndexed { i, layer ->
-            if (layers.getOrNull(i)?.visible != true) return@forEachIndexed
-            layer.strokes.forEach { stroke ->
+
+            frame?.layers?.getOrNull(layerIndex)?.strokes?.forEach { stroke ->
                 if (stroke.points.isEmpty()) return@forEach
                 val path = android.graphics.Path().apply {
                     moveTo(stroke.points.first().x, stroke.points.first().y)
@@ -830,16 +835,47 @@ fun MotionCanvasApp() {
                     if (stroke.closed) close()
                 }
                 val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-                paint.color = stroke.color.copy(alpha = stroke.opacity * layers[i].opacity).toArgb()
+                paint.color = stroke.color.copy(alpha = stroke.opacity).toArgb()
                 paint.style = if (stroke.filled) AndroidPaint.Style.FILL else AndroidPaint.Style.STROKE
                 paint.strokeWidth = stroke.width
                 paint.strokeCap = AndroidPaint.Cap.ROUND
-                canvas.drawPath(path, paint)
+                paint.strokeJoin = AndroidPaint.Join.ROUND
+                layerCanvas.drawPath(path, paint)
             }
+            return layerBitmap
         }
+
+        var belowBitmap: Bitmap? = null
+        layers.indices.forEach { i ->
+            if (layers.getOrNull(i)?.visible != true) return@forEach
+            val layerBitmap = renderLayerBitmap(i)
+
+            if (layers[i].clipToBelow && belowBitmap != null) {
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                val clipped = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+                val clippedCanvas = AndroidCanvas(clipped)
+                clippedCanvas.drawBitmap(layerBitmap, 0f, 0f, null)
+                clippedCanvas.drawBitmap(belowBitmap, 0f, 0f, paint)
+                paint.xfermode = null
+                mergedCanvas.drawBitmap(clipped, 0f, 0f, layerPaint(layers[i].opacity))
+                clipped.recycle()
+            } else {
+                mergedCanvas.drawBitmap(layerBitmap, 0f, 0f, layerPaint(layers[i].opacity))
+            }
+
+            belowBitmap?.recycle()
+            belowBitmap = layerBitmap
+        }
+        belowBitmap?.recycle()
         return merged
     }
 
+    fun layerPaint(opacity: Float): AndroidPaint {
+        val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+        paint.alpha = (opacity.coerceIn(0f, 1f) * 255f).toInt()
+        return paint
+    }
     fun exportGif(uri: Uri) {
         try {
             context.contentResolver.openOutputStream(uri)?.use { output ->
