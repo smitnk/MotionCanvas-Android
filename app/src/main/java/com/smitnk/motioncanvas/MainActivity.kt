@@ -178,6 +178,9 @@ fun MotionCanvasApp() {
     var gridType by remember { mutableStateOf("2D") }
     var gridSpacing by remember { mutableFloatStateOf(100f) }
     var perspectivePoints by remember { mutableIntStateOf(1) }
+    var perspectiveGuide by remember { mutableStateOf(PerspectiveGuideModel().withPointCount(1, rasterWidth.toFloat(), rasterHeight.toFloat())) }
+    var perspectiveHandle by remember { mutableIntStateOf(-1) }
+    var perspectiveHorizonHandle by remember { mutableStateOf(false) }
     var pingPong by remember { mutableStateOf(false) }
     var playDirection by remember { mutableIntStateOf(1) }
     var timelineLoopMode by remember { mutableStateOf(TimelineLoopMode.LOOP) }
@@ -1056,7 +1059,9 @@ fun MotionCanvasApp() {
                 Text("Grid " + gridSpacing.toInt())
                 Slider(gridSpacing, { gridSpacing = it }, valueRange = 40f..240f, modifier = Modifier.width(130.dp))
                 if (gridType == "PERSPECTIVE") listOf(1, 2, 3).forEach { n ->
-                    FilterChip(perspectivePoints == n, { perspectivePoints = n }, label = { Text(n.toString() + "P") })
+                    FilterChip(perspectivePoints == n, { perspectivePoints = n; perspectiveGuide = perspectiveGuide.withPointCount(n, rasterWidth.toFloat(), rasterHeight.toFloat()) }, label = { Text(n.toString() + "P") })
+                    FilterChip(perspectiveGuide.snapEnabled, { perspectiveGuide = perspectiveGuide.copy(snapEnabled = !perspectiveGuide.snapEnabled) }, label = { Text("Snap") })
+                    Button(onClick = { perspectiveGuide = PerspectiveGuideModel().withPointCount(perspectivePoints, rasterWidth.toFloat(), rasterHeight.toFloat()) }) { Text("Reset VP") }
                 }
             }
         }
@@ -1144,6 +1149,11 @@ fun MotionCanvasApp() {
                         detectDragGestures(
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
+                                if (showGrid && gridType == "PERSPECTIVE") {
+                                    perspectiveHandle = perspectiveGuide.nearestPoint(artStart)
+                                    perspectiveHorizonHandle = perspectiveHandle < 0 && perspectiveGuide.isNearHorizon(artStart)
+                                    if (perspectiveHandle >= 0 || perspectiveHorizonHandle) return@detectDragGestures
+                                }
                                 if (editStrokeIndex != null) {
  else if (nodeEditorMode && bezierHandleMode) {
                                         val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)?.points.orEmpty()
@@ -1185,6 +1195,14 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
+                                if (showGrid && gridType == "PERSPECTIVE" && perspectiveHandle >= 0) {
+                                    perspectiveGuide = perspectiveGuide.movePoint(perspectiveHandle, artPoint)
+                                    return@detectDragGestures
+                                }
+                                if (showGrid && gridType == "PERSPECTIVE" && perspectiveHorizonHandle) {
+                                    perspectiveGuide = perspectiveGuide.moveHorizon(artPoint.y, rasterHeight.toFloat())
+                                    return@detectDragGestures
+                                }
  else if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
                                     updateBezierHandle(artPoint, activeHandleSide)
                                 } else if (editStrokeIndex != null && sculptMode) {
@@ -1208,7 +1226,10 @@ fun MotionCanvasApp() {
                                 }
                             },
                             onDragEnd = {
-                                if (editStrokeIndex != null) {
+                                if (perspectiveHandle >= 0 || perspectiveHorizonHandle) {
+                                    perspectiveHandle = -1
+                                    perspectiveHorizonHandle = false
+                                } else if (editStrokeIndex != null) {
                                     saveFrame()
                                     activeHandle = -1
                                     editNodeIndex = -1
@@ -1217,6 +1238,8 @@ fun MotionCanvasApp() {
                                 } else if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
                             },
                             onDragCancel = {
+                                perspectiveHandle = -1
+                                perspectiveHorizonHandle = false
                                 current = emptyList()
                                 selection = emptyList()
                                 editNodeIndex = -1
@@ -1242,13 +1265,12 @@ fun MotionCanvasApp() {
                             var gx2 = 0f
                             while (gx2 <= rasterWidth + rasterHeight) { drawLine(Color.Gray.copy(alpha = 0.18f), Offset(gx2, 0f), Offset(gx2 - rasterHeight, rasterHeight.toFloat()), 1f); gx2 += step }
                         } else {
-                            val center = Offset(rasterWidth / 2f, rasterHeight / 2f)
-                            val vps = when (perspectivePoints) {
-                                1 -> listOf(Offset(rasterWidth / 2f, -500f))
-                                2 -> listOf(Offset(-500f, rasterHeight / 2f), Offset(rasterWidth + 500f, rasterHeight / 2f))
-                                else -> listOf(Offset(-500f, -400f), Offset(rasterWidth + 500f, -400f), Offset(rasterWidth / 2f, rasterHeight + 1500f))
+                            val center = Offset(rasterWidth / 2f, perspectiveGuide.horizonY)
+                            drawLine(Color.Gray.copy(alpha = 0.45f), Offset(0f, perspectiveGuide.horizonY), Offset(rasterWidth.toFloat(), perspectiveGuide.horizonY), 2f)
+                            perspectiveGuide.vanishingPoints.forEachIndexed { i, vp ->
+                                drawLine(Color.Gray.copy(alpha = 0.28f), center, vp, 1.5f)
+                                drawCircle(if (i == perspectiveHandle) Color.Yellow else Color.Cyan, 18f, vp)
                             }
-                            vps.forEach { vp -> drawLine(Color.Gray.copy(alpha = 0.28f), center, vp, 1.5f) }
                         }
                     }
 
