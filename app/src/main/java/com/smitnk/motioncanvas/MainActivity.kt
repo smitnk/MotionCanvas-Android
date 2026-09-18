@@ -67,7 +67,7 @@ data class Stroke(
 data class ArtLayer(val name: String, val visible: Boolean = true, val opacity: Float = 1f)
 data class LayerFrame(val strokes: List<Stroke> = emptyList(), val hold: Int = 1)
 data class Frame(val layers: List<LayerFrame> = emptyList())
-enum class Tool { BRUSH, ERASER, LINE, RECTANGLE, ELLIPSE, SELECT, FILL }
+enum class Tool { BRUSH, ERASER, LINE, RECTANGLE, ELLIPSE, SELECT, FILL, EYEDROPPER }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,6 +127,13 @@ fun MotionCanvasApp() {
     var selectedStrokeIds by remember { mutableStateOf(emptySet<Int>()) }
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
+    var showColorPicker by remember { mutableStateOf(false) }
+    var hue by remember { mutableFloatStateOf(0f) }
+    var saturation by remember { mutableFloatStateOf(1f) }
+    var value by remember { mutableFloatStateOf(1f) }
+    var colorAlpha by remember { mutableFloatStateOf(1f) }
+    var hexColor by remember { mutableStateOf("#000000") }
+    var recentColors by remember { mutableStateOf(listOf(Color.Black, Color.White, Color.Red, Color.Blue)) }
     var brushType by remember { mutableStateOf("Pencil") }
     var pressureEnabled by remember { mutableStateOf(true) }
     var width by remember { mutableFloatStateOf(10f) }
@@ -153,6 +160,11 @@ fun MotionCanvasApp() {
     var shapeFilled by remember { mutableStateOf(false) }
     var symmetry by remember { mutableStateOf(false) }
     var symmetryAxis by remember { mutableFloatStateOf(0.5f) }
+    var radialSymmetry by remember { mutableStateOf(false) }
+    var radialCount by remember { mutableIntStateOf(6) }
+    var alphaLock by remember { mutableStateOf(false) }
+    var pingPong by remember { mutableStateOf(false) }
+    var playDirection by remember { mutableIntStateOf(1) }
     data class EditorSnapshot(
         val strokes: List<List<Stroke>>,
         val rasters: List<Bitmap>
@@ -554,6 +566,14 @@ fun MotionCanvasApp() {
                 val mirrored = points.map { p -> Offset(axisX - (p.x - axisX), p.y) }
                 updated[selectedLayer] = updated[selectedLayer] + stroke.copy(points = mirrored, pressures = currentPressures)
             }
+            if (radialSymmetry && tool != Tool.SELECT) {
+                val center = Offset(rasterWidth / 2f, rasterHeight / 2f)
+                val count = radialCount.coerceIn(2, 24)
+                for (copyIndex in 1 until count) {
+                    val angle = copyIndex * 360f / count.toFloat()
+                    updated[selectedLayer] = updated[selectedLayer] + stroke.copy(points = transformPoints(points, center, 1f, angle), pressures = currentPressures)
+                }
+            }
 
             currentStrokes = updated
             saveFrame()
@@ -650,10 +670,19 @@ fun MotionCanvasApp() {
         layers = layers.toMutableList().also { it[index] = it[index].copy(visible = !it[index].visible) }
     }
 
-    LaunchedEffect(playing, fps, frameData.size) {
+    LaunchedEffect(playing, fps, frameData.size, pingPong) {
         while (playing) {
             delay(1000L / fps)
-            loadFrame((frameIndex + 1) % frameData.size)
+            val next = frameIndex + playDirection
+            if (next >= frameData.size || next < 0) {
+                if (pingPong && frameData.size > 1) {
+                    playDirection = -playDirection
+                    loadFrame((frameIndex + playDirection).coerceIn(0, frameData.lastIndex))
+                } else {
+                    playDirection = 1
+                    loadFrame(0)
+                }
+            } else loadFrame(next)
         }
     }
 
@@ -664,6 +693,84 @@ fun MotionCanvasApp() {
         Color.Black, Color.White, Color.Red, Color(0xFFFF9800), Color.Yellow,
         Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color(0xFF795548)
     )
+
+    fun openColorPicker() {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(brush.toArgb(), hsv)
+        hue = hsv[0]; saturation = hsv[1]; value = hsv[2]; colorAlpha = brush.alpha
+        hexColor = String.format("#%08X", brush.toArgb())
+        showColorPicker = true
+    }
+
+    fun applyPickerColor() {
+        brush = Color(android.graphics.Color.HSVToColor(
+            (colorAlpha.coerceIn(0f, 1f) * 255f).toInt(),
+            floatArrayOf(hue, saturation, value)
+        ))
+        recentColors = (listOf(brush) + recentColors.filter { it != brush }).take(12)
+        showColorPicker = false
+    }
+
+    fun sampleColor(point: Offset) {
+        val x = point.x.toInt().coerceIn(0, rasterWidth - 1)
+        val y = point.y.toInt().coerceIn(0, rasterHeight - 1)
+        for (i in rasterLayers.lastIndex downTo 0) {
+            if (layers.getOrNull(i)?.visible != true) continue
+            val pixel = rasterLayers[i].getPixel(x, y)
+            if ((pixel ushr 24) != 0) { brush = Color(pixel); return }
+        }
+        currentStrokes.getOrNull(selectedLayer).orEmpty().minByOrNull { s ->
+            s.points.minOfOrNull { p ->
+                val dx = p.x - point.x; val dy = p.y - point.y
+                dx * dx + dy * dy
+            } ?: Float.MAX_VALUE
+        }?.let { brush = it.color }
+    }
+
+    if (showColorPicker) {
+        AlertDialog(
+            onDismissRequest = { showColorPicker = false },
+            title = { Text("Color Picker") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.fillMaxWidth().height(50.dp).background(brush).border(1.dp, Color.Gray))
+                    Text("Hue " + hue.toInt() + "°"); Slider(hue, { hue = it }, valueRange = 0f..360f)
+                    Text("Saturation " + (saturation * 100).toInt() + "%"); Slider(saturation, { saturation = it }, valueRange = 0f..1f)
+                    Text("Value " + (value * 100).toInt() + "%"); Slider(value, { value = it }, valueRange = 0f..1f)
+                    Text("Alpha " + (colorAlpha * 100).toInt() + "%"); Slider(colorAlpha, { colorAlpha = it }, valueRange = 0f..1f)
+                    OutlinedTextField(
+                        value = hexColor,
+                        onValueChange = { input ->
+                            hexColor = input
+                            runCatching {
+                                val parsed = android.graphics.Color.parseColor(input)
+                                val hsv = FloatArray(3)
+                                android.graphics.Color.colorToHSV(parsed, hsv)
+                                hue = hsv[0]; saturation = hsv[1]; value = hsv[2]; colorAlpha = (parsed ushr 24) / 255f
+                            }
+                        },
+                        label = { Text("HEX / ARGB") },
+                        singleLine = true
+                    )
+                    Text("Recent colors")
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        recentColors.forEach { color ->
+                            Box(Modifier.size(32.dp).clip(CircleShape).background(color).border(1.dp, Color.Gray, CircleShape).clickable {
+                                brush = color
+                                val hsv = FloatArray(3)
+                                android.graphics.Color.colorToHSV(color.toArgb(), hsv)
+                                hue = hsv[0]; saturation = hsv[1]; value = hsv[2]; colorAlpha = color.alpha
+                                hexColor = String.format("#%08X", color.toArgb())
+                            })
+                        }
+                    }
+                }
+            },
+            confirmButton = { Button(onClick = ::applyPickerColor) { Text("Apply") } },
+            dismissButton = { TextButton(onClick = { showColorPicker = false }) { Text("Cancel") } }
+        )
+    }
+
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -695,6 +802,8 @@ fun MotionCanvasApp() {
             FilterChip(tool == Tool.ELLIPSE, { tool = Tool.ELLIPSE }, label = { Text("Ellipse") })
             FilterChip(tool == Tool.SELECT, { tool = Tool.SELECT }, label = { Text("Lasso") })
             FilterChip(tool == Tool.FILL, { tool = Tool.FILL }, label = { Text("Fill") })
+            FilterChip(tool == Tool.EYEDROPPER, { tool = Tool.EYEDROPPER }, label = { Text("Eyedropper") })
+            Button(onClick = ::openColorPicker) { Text("Color Picker") }
             FilterChip(brushType == "Pencil", { brushType = "Pencil" }, label = { Text("Pencil") })
             FilterChip(brushType == "Pen", { brushType = "Pen" }, label = { Text("Pen") })
             FilterChip(brushType == "Marker", { brushType = "Marker" }, label = { Text("Marker") })
@@ -718,7 +827,9 @@ fun MotionCanvasApp() {
                 )
             }
             FilterChip(shapeFilled, { shapeFilled = !shapeFilled }, label = { Text("Shape Fill") })
-            FilterChip(symmetry, { symmetry = !symmetry }, label = { Text("Symmetry") })
+            FilterChip(symmetry, { symmetry = !symmetry }, label = { Text("Mirror") })
+            FilterChip(radialSymmetry, { radialSymmetry = !radialSymmetry }, label = { Text("Radial") })
+            FilterChip(alphaLock, { alphaLock = !alphaLock }, label = { Text("Alpha Lock") })
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -982,6 +1093,7 @@ fun MotionCanvasApp() {
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = { playing = !playing }) { Text(if (playing) "Pause" else "Play") }
+            FilterChip(pingPong, { pingPong = !pingPong }, label = { Text("Ping-Pong") })
             Text("FPS " + fps, Modifier.padding(horizontal = 4.dp))
             listOf(8, 12, 24).forEach { rate -> Button(onClick = { fps = rate }) { Text(rate.toString()) } }
             Button(onClick = { setHold((frameData[frameIndex].layers.firstOrNull()?.hold ?: 1) + 1) }) { Text("Hold+") }
