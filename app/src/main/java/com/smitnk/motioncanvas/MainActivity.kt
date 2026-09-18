@@ -729,7 +729,8 @@ fun MotionCanvasApp() {
         try {
             context.contentResolver.openOutputStream(uri)?.use { output ->
                 val encoder = GifEncoder(output, rasterWidth, rasterHeight, 0)
-                val options = ImageOptions().setDelay((1000L / fps).coerceAtLeast(1L), TimeUnit.MILLISECONDS)
+                val options = ImageOptions()
+                options.setDelay((1000L / fps).coerceAtLeast(1L), TimeUnit.MILLISECONDS)
                 frameData.indices.forEach { index ->
                     val bitmap = renderFrameBitmap(index)
                     val pixels = IntArray(rasterWidth * rasterHeight)
