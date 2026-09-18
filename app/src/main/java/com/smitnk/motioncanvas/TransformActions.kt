@@ -17,6 +17,45 @@ object TransformActions {
         Offset(point.x, center.y - (point.y - center.y))
     }
 
+    fun rotateAroundPivot(
+        strokes: List<Stroke>,
+        selection: StrokeSelection,
+        degrees: Float
+    ): List<Stroke> {
+        if (!selection.active) return strokes
+        val box = selection.transformBox ?: return strokes
+        val pivot = box.pivot
+        val radians = Math.toRadians(degrees.toDouble())
+        val cos = kotlin.math.cos(radians).toFloat()
+        val sin = kotlin.math.sin(radians).toFloat()
+
+        fun rotatePoint(point: Offset): Offset {
+            val dx = point.x - pivot.x
+            val dy = point.y - pivot.y
+            return Offset(
+                pivot.x + dx * cos - dy * sin,
+                pivot.y + dx * sin + dy * cos
+            )
+        }
+
+        fun rotateHandle(handle: Offset): Offset {
+            return Offset(
+                handle.x * cos - handle.y * sin,
+                handle.x * sin + handle.y * cos
+            )
+        }
+
+        val selected = selection.indices.toSet()
+        return strokes.mapIndexed { index, stroke ->
+            if (index !in selected) stroke
+            else stroke.copy(
+                points = stroke.points.map(::rotatePoint),
+                inHandles = stroke.inHandles.map(::rotateHandle),
+                outHandles = stroke.outHandles.map(::rotateHandle)
+            )
+        }
+    }
+
     fun movePivot(box: TransformBox, pivot: Offset): TransformBox =
         box.copy(pivot = pivot)
 
