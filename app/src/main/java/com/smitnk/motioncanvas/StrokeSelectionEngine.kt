@@ -90,10 +90,35 @@ object StrokeSelectionEngine {
         val top = minOf(min.y, max.y)
         val bottom = maxOf(min.y, max.y)
 
+        fun intersects(stroke: Stroke): Boolean {
+            if (stroke.points.isEmpty()) return false
+            var minX = Float.POSITIVE_INFINITY
+            var maxX = Float.NEGATIVE_INFINITY
+            var minY = Float.POSITIVE_INFINITY
+            var maxY = Float.NEGATIVE_INFINITY
+
+            fun include(point: Offset) {
+                minX = minOf(minX, point.x)
+                maxX = maxOf(maxX, point.x)
+                minY = minOf(minY, point.y)
+                maxY = maxOf(maxY, point.y)
+            }
+
+            stroke.points.forEachIndexed { i, point ->
+                include(point)
+                if (stroke.inHandles.size == stroke.points.size &&
+                    stroke.outHandles.size == stroke.points.size
+                ) {
+                    include(point + stroke.inHandles[i])
+                    include(point + stroke.outHandles[i])
+                }
+            }
+
+            return maxX >= left && minX <= right && maxY >= top && minY <= bottom
+        }
+
         val found = strokes.mapIndexedNotNull { index, stroke ->
-            if (stroke.points.isNotEmpty() && stroke.points.all {
-                    it.x in left..right && it.y in top..bottom
-                }) index else null
+            if (intersects(stroke)) index else null
         }.toSet()
 
         val indices = if (additive) current + found else found
