@@ -54,6 +54,9 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
+import java.util.concurrent.TimeUnit
+import com.squareup.gifencoder.GifEncoder
+import com.squareup.gifencoder.ImageOptions
 
 data class Stroke(
     val points: List<Offset>,
@@ -691,8 +694,61 @@ fun MotionCanvasApp() {
         }
     }
 
+    fun renderFrameBitmap(index: Int): Bitmap {
+        val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(merged)
+        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+        rasterFrames.getOrNull(index)?.forEachIndexed { i, bitmap ->
+            if (layers.getOrNull(i)?.visible == true) {
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                paint.alpha = (layers[i].opacity.coerceIn(0f, 1f) * 255f).toInt()
+                canvas.drawBitmap(bitmap, 0f, 0f, paint)
+            }
+        }
+        frameData.getOrNull(index)?.layers?.forEachIndexed { i, layer ->
+            if (layers.getOrNull(i)?.visible != true) return@forEachIndexed
+            layer.strokes.forEach { stroke ->
+                if (stroke.points.isEmpty()) return@forEach
+                val path = android.graphics.Path().apply {
+                    moveTo(stroke.points.first().x, stroke.points.first().y)
+                    stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
+                    if (stroke.closed) close()
+                }
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                paint.color = stroke.color.copy(alpha = stroke.opacity * layers[i].opacity).toArgb()
+                paint.style = if (stroke.filled) AndroidPaint.Style.FILL else AndroidPaint.Style.STROKE
+                paint.strokeWidth = stroke.width
+                paint.strokeCap = AndroidPaint.Cap.ROUND
+                canvas.drawPath(path, paint)
+            }
+        }
+        return merged
+    }
+
+    fun exportGif(uri: Uri) {
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { output ->
+                val encoder = GifEncoder(output, rasterWidth, rasterHeight, 0)
+                val options = ImageOptions().setDelay((1000L / fps).coerceAtLeast(1L), TimeUnit.MILLISECONDS)
+                frameData.indices.forEach { index ->
+                    val bitmap = renderFrameBitmap(index)
+                    val pixels = IntArray(rasterWidth * rasterHeight)
+                    bitmap.getPixels(pixels, 0, rasterWidth, 0, 0, rasterWidth, rasterHeight)
+                    val data = Array(rasterWidth) { x -> IntArray(rasterHeight) { y -> pixels[y * rasterWidth + x] } }
+                    encoder.addImage(data, options)
+                    bitmap.recycle()
+                }
+                encoder.finishEncoding()
+            }
+            exportStatus = "GIF exported"
+        } catch (e: Exception) {
+            exportStatus = "GIF export failed: " + (e.message ?: "unknown error")
+        }
+    }
+
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) saveProject(uri) }
     val loadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) loadProject(uri) }
+    val gifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/gif")) { uri -> if (uri != null) exportGif(uri) }
 
     val colors = listOf(
         Color.Black, Color.White, Color.Red, Color(0xFFFF9800), Color.Yellow,
@@ -784,6 +840,7 @@ fun MotionCanvasApp() {
                 TextButton(onClick = { saveLauncher.launch("MotionCanvas_Project.motioncanvas") }) { Text("Save Project") }
                 TextButton(onClick = { loadLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }) { Text("Load Project") }
                 TextButton(onClick = { exportCurrentPng() }) { Text("Export PNG") }
+                TextButton(onClick = { gifLauncher.launch("MotionCanvas.gif") }) { Text("Export GIF") }
                 TextButton(enabled = undo.isNotEmpty(), onClick = {
                     val previous = undo.last()
                     redo = (redo + EditorSnapshot(currentStrokes, rasterLayers.map { copyBitmap(it) })).takeLast(20)
