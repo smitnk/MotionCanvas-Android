@@ -143,6 +143,11 @@ fun MotionCanvasApp() {
     var weightRadius by remember { mutableFloatStateOf(180f) }
     var weightStrength by remember { mutableFloatStateOf(0.75f) }
     var weightJoints by remember { mutableStateOf(listOf<Offset>()) }
+    var sculptMode by remember { mutableStateOf(false) }
+    var sculptTool by remember { mutableStateOf("Grab") }
+    var sculptRadius by remember { mutableFloatStateOf(140f) }
+    var sculptStrength by remember { mutableFloatStateOf(0.65f) }
+    var sculptSnapshotTaken by remember { mutableStateOf(false) }
     var spacing by remember { mutableFloatStateOf(0.18f) }
     var taper by remember { mutableFloatStateOf(0f) }
     var shapeFilled by remember { mutableStateOf(false) }
@@ -391,6 +396,31 @@ fun MotionCanvasApp() {
             it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = stroke.copy(points = updated) }
         }
         weightJoints = weightJoints.toMutableList().also { it[weightJoint] = point }
+    }
+
+    fun sculptStroke(point: Offset, delta: Offset) {
+        val index = editStrokeIndex ?: return
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices) return
+        val stroke = strokes[index]
+        if (stroke.points.size < 2) return
+        val r = sculptRadius.coerceAtLeast(1f)
+        val updated = stroke.points.mapIndexed { i, p ->
+            val dx = p.x - point.x; val dy = p.y - point.y
+            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+            val falloff = (1f - dist / r).coerceIn(0f, 1f)
+            val w = falloff * falloff * sculptStrength
+            when (sculptTool) {
+                "Grab" -> Offset(p.x + delta.x * w, p.y + delta.y * w)
+                "Push" -> { val len = dist.coerceAtLeast(0.001f); val d = delta.getDistance(); Offset(p.x + dx / len * d * w, p.y + dy / len * d * w) }
+                "Pinch" -> Offset(p.x - dx * w * 0.12f, p.y - dy * w * 0.12f)
+                "Smooth" -> { val a = stroke.points.getOrNull(i - 1) ?: p; val b = stroke.points.getOrNull(i + 1) ?: p; Offset(p.x + (a.x + b.x - 2f * p.x) * w * 0.35f, p.y + (a.y + b.y - 2f * p.y) * w * 0.35f) }
+                "Thickness" -> p
+                else -> p
+            }
+        }
+        val newWidth = if (sculptTool == "Thickness") (stroke.width + delta.x * 0.35f * sculptStrength).coerceIn(1f, 160f) else stroke.width
+        currentStrokes = currentStrokes.toMutableList().also { it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = stroke.copy(points = updated, width = newWidth) } }
     }
 
     fun commitStroke() {
@@ -721,6 +751,20 @@ fun MotionCanvasApp() {
                 Text((weightStrength * 100).toInt().toString() + "%")
             }
         }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(sculptMode, { sculptMode = !sculptMode }, label = { Text("Sculpt Mode") })
+            if (sculptMode) listOf("Grab", "Push", "Smooth", "Pinch", "Thickness").forEach { mode ->
+                FilterChip(sculptTool == mode, { sculptTool = mode }, label = { Text(mode) })
+            }
+        }
+        if (sculptMode) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Sculpt Radius", Modifier.width(95.dp)); Slider(sculptRadius, { sculptRadius = it }, valueRange = 30f..360f); Text(sculptRadius.toInt().toString())
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Strength", Modifier.width(75.dp)); Slider(sculptStrength, { sculptStrength = it }, valueRange = 0.1f..1f); Text((sculptStrength * 100).toInt().toString() + "%")
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Spacing", Modifier.width(75.dp))
             Slider(spacing, { spacing = it }, valueRange = 0.05f..0.6f)
@@ -762,7 +806,10 @@ fun MotionCanvasApp() {
                                 val artStart = screenToArt(start)
                                 if (editStrokeIndex != null) {
                                     ensureWeightJoints()
-                                    if (weightPaintMode) {
+                                    if (sculptMode) {
+                                        if (!sculptSnapshotTaken) { snapshot(); sculptSnapshotTaken = true }
+                                        editNodeIndex = -1
+                                    } else if (weightPaintMode) {
                                         weightJoint = weightJoints.indices.minByOrNull { i ->
                                             val dx = weightJoints[i].x - artStart.x
                                             val dy = weightJoints[i].y - artStart.y
@@ -780,7 +827,9 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (editStrokeIndex != null && weightPaintMode && weightJoint >= 0) {
+                                if (editStrokeIndex != null && sculptMode) {
+                                    sculptStroke(artPoint, change.position - change.previousPosition)
+                                } else if (editStrokeIndex != null && weightPaintMode && weightJoint >= 0) {
                                     poseWeightJoint(artPoint)
                                 } else if (editStrokeIndex != null && editNodeIndex >= 0) {
                                     val strokeIndex = editStrokeIndex!!
@@ -803,6 +852,7 @@ fun MotionCanvasApp() {
                                     saveFrame()
                                     editNodeIndex = -1
                                     weightJoint = -1
+                                    sculptSnapshotTaken = false
                                 } else if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
                             },
                             onDragCancel = {
