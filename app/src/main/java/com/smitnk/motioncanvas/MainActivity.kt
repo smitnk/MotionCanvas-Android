@@ -181,6 +181,9 @@ fun MotionCanvasApp() {
     var gridType by remember { mutableStateOf("2D") }
     var gridSpacing by remember { mutableFloatStateOf(100f) }
     var perspectivePoints by remember { mutableIntStateOf(1) }
+    var perspectiveGuide by remember { mutableStateOf(PerspectiveGuide(listOf(Offset(800f, 600f)))) }
+    var perspectiveSnap by remember { mutableStateOf(false) }
+    var selectedVanishingPoint by remember { mutableIntStateOf(-1) }
     var pingPong by remember { mutableStateOf(false) }
     var playDirection by remember { mutableIntStateOf(1) }
     data class EditorSnapshot(
@@ -1043,7 +1046,8 @@ fun MotionCanvasApp() {
                 Text("Grid " + gridSpacing.toInt())
                 Slider(gridSpacing, { gridSpacing = it }, valueRange = 40f..240f, modifier = Modifier.width(130.dp))
                 if (gridType == "PERSPECTIVE") listOf(1, 2, 3).forEach { n ->
-                    FilterChip(perspectivePoints == n, { perspectivePoints = n }, label = { Text(n.toString() + "P") })
+                    FilterChip(perspectivePoints == n, { perspectivePoints = n }
+                FilterChip(perspectiveSnap, { perspectiveSnap = !perspectiveSnap }, label = { Text("Snap") }), label = { Text(n.toString() + "P") })
                 }
             }
         }
@@ -1272,6 +1276,16 @@ fun MotionCanvasApp() {
                             if (parent in rigJoints.indices) drawLine(Color.Cyan, rigJoints[parent], p, 4f)
                             drawCircle(if (i == rigSelected) Color.Yellow else Color.Cyan, 14f, p)
                             drawCircle(Color.DarkGray, 5f, p)
+                        }
+                    }
+
+                    if (showGrid && gridType == "PERSPECTIVE") {
+                        val h = perspectiveGuide.horizonY
+                        drawLine(Color.Gray, Offset(0f, h), Offset(rasterWidth.toFloat(), h), 2f)
+                        perspectiveGuide.points.take(perspectivePoints).forEachIndexed { i, vp ->
+                            drawLine(Color.Gray, Offset(0f, h), vp, 1f)
+                            drawLine(Color.Gray, Offset(rasterWidth.toFloat(), h), vp, 1f)
+                            drawCircle(if (i == selectedVanishingPoint) Color.Yellow else Color.Cyan, 14f, vp)
                         }
                     }
 
