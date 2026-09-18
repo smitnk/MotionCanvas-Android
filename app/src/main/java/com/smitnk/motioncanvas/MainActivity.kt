@@ -1238,7 +1238,7 @@ fun MotionCanvasApp() {
                     }
                 ) {
                     val baseScale = artScale()
-                    androidx.compose.ui.graphics.drawscope.withTransform({
+                    withTransform(transformBlock = {
                         translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y)
                         rotate(degrees = rotation)
                         scale(scaleX = baseScale * canvasScale, scaleY = baseScale * canvasScale, pivot = Offset.Zero)
