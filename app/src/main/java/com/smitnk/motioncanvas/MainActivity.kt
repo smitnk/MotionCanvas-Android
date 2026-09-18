@@ -1457,6 +1457,8 @@ fun MotionCanvasApp() {
     }
 }
 
+}
+
 private fun sizeOfCanvasFallback(axis: Float): Float = 500f * axis
 
 private fun drawStroke(
