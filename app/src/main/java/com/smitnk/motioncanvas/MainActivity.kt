@@ -69,7 +69,7 @@ data class Stroke(
     val closed: Boolean = false,
     val filled: Boolean = false
 )
-data class ArtLayer(val name: String, val visible: Boolean = true, val opacity: Float = 1f)
+data class ArtLayer(val name: String, val visible: Boolean = true, val opacity: Float = 1f, val clipToBelow: Boolean = false)
 data class LayerFrame(val strokes: List<Stroke> = emptyList(), val hold: Int = 1)
 data class Frame(val layers: List<LayerFrame> = emptyList())
 enum class Tool { BRUSH, ERASER, LINE, RECTANGLE, ELLIPSE, SELECT, FILL, EYEDROPPER }
@@ -172,6 +172,7 @@ fun MotionCanvasApp() {
     var radialSymmetry by remember { mutableStateOf(false) }
     var radialCount by remember { mutableIntStateOf(6) }
     var alphaLock by remember { mutableStateOf(false) }
+    var clippingMask by remember { mutableStateOf(false) }
     var showGrid by remember { mutableStateOf(false) }
     var gridType by remember { mutableStateOf("2D") }
     var gridSpacing by remember { mutableFloatStateOf(100f) }
@@ -994,6 +995,7 @@ fun MotionCanvasApp() {
             FilterChip(symmetry, { symmetry = !symmetry }, label = { Text("Mirror") })
             FilterChip(radialSymmetry, { radialSymmetry = !radialSymmetry }, label = { Text("Radial") })
             FilterChip(alphaLock, { alphaLock = !alphaLock }, label = { Text("Alpha Lock") })
+            FilterChip(clippingMask, { if (selectedLayer > 0) { clippingMask = !clippingMask; val updated = layers.toMutableList(); updated[selectedLayer] = updated[selectedLayer].copy(clipToBelow = clippingMask); layers = updated } }, enabled = selectedLayer > 0, label = { Text("Clip Below") })
             FilterChip(showGrid, { showGrid = !showGrid }, label = { Text("Grid") })
         }
 
