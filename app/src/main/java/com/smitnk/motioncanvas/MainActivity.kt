@@ -37,7 +37,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.awaitEachGesture
 import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.unit.dp
-import android.view.MotionEvent
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -121,6 +120,8 @@ fun MotionCanvasApp() {
     var width by remember { mutableFloatStateOf(10f) }
     var opacity by remember { mutableFloatStateOf(1f) }
     var stabilization by remember { mutableFloatStateOf(0.35f) }
+    var spacing by remember { mutableFloatStateOf(0.18f) }
+    var taper by remember { mutableFloatStateOf(0f) }
     var shapeFilled by remember { mutableStateOf(false) }
     var symmetry by remember { mutableStateOf(false) }
     var symmetryAxis by remember { mutableFloatStateOf(0.5f) }
@@ -205,7 +206,22 @@ fun MotionCanvasApp() {
                         Offset(cx + rx * cos(t), cy + ry * sin(t))
                     }
                 }
-                else -> stabilized
+                else -> {
+                    if (spacing <= 0f || stabilized.size < 2) stabilized else {
+                        val out = ArrayList<Offset>()
+                        out.add(stabilized.first())
+                        var carry = 0f
+                        for (i in 1 until stabilized.size) {
+                            val a = stabilized[i - 1]; val b = stabilized[i]
+                            val dx = b.x - a.x; val dy = b.y - a.y
+                            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                            carry += dist
+                            if (carry >= max(1f, width * spacing)) { out.add(b); carry = 0f }
+                        }
+                        if (out.last() != stabilized.last()) out.add(stabilized.last())
+                        out
+                    }
+                }
             }
             if (tool == Tool.BRUSH || tool == Tool.ERASER) {
                 val bitmap = rasterLayers[selectedLayer]
@@ -231,7 +247,7 @@ fun MotionCanvasApp() {
                     for (i in 0 until minOf(points.size, pressures.size)) {
                         val p = pressures[i].coerceIn(0.05f, 1.25f)
                         val pressurePaint = AndroidPaint(paint)
-                        pressurePaint.strokeWidth = width * (0.45f + p * 0.85f)
+                        pressurePaint.strokeWidth = width * (0.45f + p * 0.85f) * (1f - taper * (i.toFloat() / max(1, points.lastIndex)))
                         pressurePaint.alpha = (opacity.coerceIn(0f, 1f) * (0.45f + p * 0.55f) * 255f).toInt()
                         if (i == 0) androidCanvas.drawCircle(points[i].x, points[i].y, pressurePaint.strokeWidth / 2f, pressurePaint)
                         else androidCanvas.drawLine(points[i-1].x, points[i-1].y, points[i].x, points[i].y, pressurePaint)
@@ -418,6 +434,19 @@ fun MotionCanvasApp() {
             Slider(stabilization, { stabilization = it }, valueRange = 0f..0.85f)
             Text((stabilization * 100).toInt().toString() + "%")
         }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Spacing", Modifier.width(75.dp))
+            Slider(spacing, { spacing = it }, valueRange = 0.05f..0.6f)
+            Text((spacing * 100).toInt().toString() + "%")
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Taper", Modifier.width(75.dp))
+            Slider(taper, { taper = it }, valueRange = 0f..0.8f)
+            Text((taper * 100).toInt().toString() + "%")
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.End) {
+            FilterChip(pressureEnabled, { pressureEnabled = !pressureEnabled }, label = { Text("Pressure") })
+        }
 
         Row(Modifier.weight(1f).fillMaxWidth()) {
             Box(
@@ -494,7 +523,7 @@ fun MotionCanvasApp() {
                         }
                         drawStroke(
                             this,
-                            Stroke(preview, if (tool == Tool.ERASER) Color.White else brush, emptyList(), width, opacity,
+                            Stroke(preview, emptyList(), if (tool == Tool.ERASER) Color.White else brush, width, opacity,
                                 closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE)
                         )
                     }
