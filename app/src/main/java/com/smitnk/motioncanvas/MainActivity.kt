@@ -22,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -42,10 +43,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.awaitEachGesture
-import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
@@ -116,6 +120,7 @@ fun transformPoints(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MotionCanvasApp() {
     var layers by remember { mutableStateOf(listOf(ArtLayer("Layer 1"))) }
@@ -189,7 +194,7 @@ fun MotionCanvasApp() {
     )
     var undo by remember { mutableStateOf(emptyList<EditorSnapshot>()) }
     var redo by remember { mutableStateOf(emptyList<EditorSnapshot>()) }
-    var scale by remember { mutableFloatStateOf(1f) }
+    var canvasScale by remember { mutableFloatStateOf(1f) }
     var rotation by remember { mutableFloatStateOf(0f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size(rasterWidth.toFloat(), rasterHeight.toFloat())) }
@@ -214,8 +219,8 @@ fun MotionCanvasApp() {
         val r = -rotation * PI.toFloat() / 180f
         val c = cos(r); val s = sin(r)
         return Offset(
-            (dx * c - dy * s) / (base * scale) + rasterWidth / 2f,
-            (dx * s + dy * c) / (base * scale) + rasterHeight / 2f
+            (dx * c - dy * s) / (base * canvasScale) + rasterWidth / 2f,
+            (dx * s + dy * c) / (base * canvasScale) + rasterHeight / 2f
         )
     }
 
@@ -265,7 +270,14 @@ fun MotionCanvasApp() {
                     else Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
                 })
             }
-            rasterFrames = loaded; frameData = List(count) { Frame(layers.map { LayerFrame() }) }; loadFrame(0); exportStatus = "Project loaded"
+            rasterFrames = loaded
+            frameData = List(count) { Frame(layers.map { LayerFrame() }) }
+            frameIndex = 0
+            currentStrokes = layers.indices.map { frameData[0].layers.getOrNull(it)?.strokes ?: emptyList() }
+            rasterLayers = rasterFrames[0].map { bitmap -> copyBitmap(bitmap) }
+            selectedStrokeIds = emptySet()
+            selection = emptyList()
+            exportStatus = "Project loaded"
         } catch (e: Exception) { exportStatus = "Load failed" }
     }
     fun exportCurrentPng() {
@@ -418,7 +430,18 @@ fun MotionCanvasApp() {
         val index = editStrokeIndex ?: return
         val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
         if (index !in strokes.indices || strokes[index].points.size < 2) return
-        addEditNode()
+        val stroke = strokes[index]
+        val insertAt = (editNodeIndex + 1).coerceIn(1, stroke.points.lastIndex)
+        val a = stroke.points[insertAt - 1]
+        val b = stroke.points[insertAt]
+        val p = Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f)
+        snapshot()
+        val points = stroke.points.toMutableList().also { it.add(insertAt, p) }
+        val updated = stroke.copy(points = points, inHandles = emptyList(), outHandles = emptyList())
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = ensureBezierHandles(updated) }
+        }
+        editNodeIndex = insertAt
     }
 
     fun addEditNode() {
@@ -694,11 +717,11 @@ fun MotionCanvasApp() {
                 saveRasterFrame()
             }
             val stroke = Stroke(
-                points,
-                currentPressures,
-                if (tool == Tool.ERASER) Color.Transparent else brush,
-                width,
-                opacity,
+                points = points,
+                pressures = currentPressures,
+                color = if (tool == Tool.ERASER) Color.Transparent else brush,
+                width = width,
+                opacity = opacity,
                 closed = tool == Tool.RECTANGLE || tool == Tool.ELLIPSE,
                 filled = shapeFilled && (tool == Tool.RECTANGLE || tool == Tool.ELLIPSE)
             )
@@ -1012,6 +1035,12 @@ fun MotionCanvasApp() {
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
         }
 
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Size " + width.toInt(), Modifier.width(70.dp))
             Slider(width, { width = it }, valueRange = 1f..80f)
@@ -1106,12 +1135,15 @@ fun MotionCanvasApp() {
             FilterChip(pressureEnabled, { pressureEnabled = !pressureEnabled }, label = { Text("Pressure") })
         }
 
+        }
         Row(Modifier.weight(1f).fillMaxWidth()) {
             Box(
-                Modifier.weight(1f).fillMaxHeight().background(Color.White)
+                Modifier.weight(1f).fillMaxHeight()
+                    .background(Color(0xFFF1F1F1))
+                    .border(1.dp, Color.LightGray)
                     .pointerInput(Unit) {
                         detectTransformGestures { _, panChange, zoomChange, rotationChange ->
-                            scale = (scale * zoomChange).coerceIn(0.25f, 8f)
+                            canvasScale = (canvasScale * zoomChange).coerceIn(0.25f, 8f)
                             pan += panChange
                             rotation += rotationChange
                         }
@@ -1218,10 +1250,27 @@ fun MotionCanvasApp() {
                         )
                     }
                 ) {
+                    // Always render a visible workspace and artboard before transformed content.
+                    drawRect(Color(0xFFE6E6E6))
                     val baseScale = artScale()
+                    val boardWidth = rasterWidth * baseScale
+                    val boardHeight = rasterHeight * baseScale
+                    val boardLeft = (size.width - boardWidth) / 2f + pan.x
+                    val boardTop = (size.height - boardHeight) / 2f + pan.y
+                    drawRect(
+                        Color.White,
+                        topLeft = Offset(boardLeft, boardTop),
+                        size = androidx.compose.ui.geometry.Size(boardWidth, boardHeight)
+                    )
+                    drawRect(
+                        Color.DarkGray,
+                        topLeft = Offset(boardLeft, boardTop),
+                        size = androidx.compose.ui.geometry.Size(boardWidth, boardHeight),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+                    )
                     translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y) {
-                        rotate(rotation) {
-                            scale(baseScale * scale, baseScale * scale, Offset.Zero) {
+                        rotate(degrees = rotation) {
+                            scale(scaleX = baseScale * canvasScale, scaleY = baseScale * canvasScale, pivot = Offset.Zero) {
                                 translate(left = -rasterWidth / 2f, top = -rasterHeight / 2f) {
                     if (showGrid) {
                         val step = gridSpacing.coerceAtLeast(20f)
@@ -1327,14 +1376,15 @@ fun MotionCanvasApp() {
                         }
                         drawStroke(
                             this,
-                            Stroke(preview, emptyList(), if (tool == Tool.ERASER) Color.White else brush, width, opacity,
-                                closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE)
+                            Stroke(points = preview, color = if (tool == Tool.ERASER) Color.White else brush, width = width, opacity = opacity,
+                                closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE),
+                            color = if (tool == Tool.ERASER) Color.White else brush
                         )
-                    }
                                 }
                             }
                         }
                     }
+                }
                 }
                 if (editStrokeIndex != null) {
                     Row(
@@ -1358,7 +1408,6 @@ fun MotionCanvasApp() {
                             Button(onClick = { bezierHandleMode = !bezierHandleMode }, enabled = nodeEditorMode) { Text(if (bezierHandleMode) "Bezier On" else "Bezier") }
                         }
                     }
-                }
                 }
             }
 
@@ -1435,6 +1484,8 @@ fun MotionCanvasApp() {
     }
 }
 
+}
+
 private fun sizeOfCanvasFallback(axis: Float): Float = 500f * axis
 
 private fun drawStroke(
@@ -1452,7 +1503,7 @@ private fun drawStroke(
                 val b = stroke.points[i + 1]
                 val c1 = Offset(a.x + stroke.outHandles[i].x, a.y + stroke.outHandles[i].y)
                 val c2 = Offset(b.x + stroke.inHandles[i + 1].x, b.y + stroke.inHandles[i + 1].y)
-                path.cubicTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y)
+                cubicTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y)
             }
         } else stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
         if (stroke.closed) close()
