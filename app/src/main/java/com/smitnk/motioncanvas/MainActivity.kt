@@ -1437,7 +1437,16 @@ fun MotionCanvasApp() {
 
 private fun sizeOfCanvasFallback(axis: Float): Float = 500f * axis
 
-private fun drawStroke(
+private fun compositeClippedLayer(base: Bitmap, layer: Bitmap): Bitmap {
+    val out = base.copy(Bitmap.Config.ARGB_8888, true)
+    val canvas = AndroidCanvas(out)
+    val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+    paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    canvas.drawBitmap(layer, 0f, 0f, paint)
+    paint.xfermode = null
+    return out
+}
+fun drawStroke(
     scope: androidx.compose.ui.graphics.drawscope.DrawScope,
     stroke: Stroke,
     color: Color,
