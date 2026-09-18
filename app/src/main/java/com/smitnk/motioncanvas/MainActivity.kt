@@ -5,24 +5,31 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
-data class Stroke(val points: List<Offset>, val color: Color, val width: Float)
+data class Stroke(val points: List<Offset>, val color: Color, val width: Float, val opacity: Float = 1f)
 data class ArtLayer(val name: String, val strokes: List<Stroke> = emptyList(), val visible: Boolean = true, val opacity: Float = 1f)
+enum class Tool { BRUSH, ERASER, LINE }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,73 +43,133 @@ fun MotionCanvasApp() {
     var layers by remember { mutableStateOf(listOf(ArtLayer("Layer 1"))) }
     var selectedLayer by remember { mutableIntStateOf(0) }
     var current by remember { mutableStateOf(emptyList<Offset>()) }
+    var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
     var width by remember { mutableFloatStateOf(10f) }
+    var opacity by remember { mutableFloatStateOf(1f) }
     var undo by remember { mutableStateOf(emptyList<List<ArtLayer>>()) }
+    var redo by remember { mutableStateOf(emptyList<List<ArtLayer>>()) }
     var scale by remember { mutableFloatStateOf(1f) }
     var rotation by remember { mutableFloatStateOf(0f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
+    var onionSkin by remember { mutableStateOf(false) }
 
-    fun saveUndo() { undo = (undo + layers).takeLast(30) }
+    fun snapshot() {
+        undo = (undo + layers).takeLast(40)
+        redo = emptyList()
+    }
 
     fun commitStroke() {
         if (current.size > 1) {
-            saveUndo()
+            snapshot()
             val layer = layers[selectedLayer]
+            val points = if (tool == Tool.LINE) listOf(current.first(), current.last()) else current
+            val color = if (tool == Tool.ERASER) Color.White else brush
+            val stroke = Stroke(points, color, width, opacity)
             layers = layers.toMutableList().also {
-                it[selectedLayer] = layer.copy(strokes = layer.strokes + Stroke(current, brush, width))
+                it[selectedLayer] = layer.copy(strokes = layer.strokes + stroke)
             }
         }
         current = emptyList()
     }
 
-    fun addLayer() {
-        saveUndo()
-        layers = layers.toMutableList().also { it.add(ArtLayer("Layer " + (it.size + 1))) }
-        selectedLayer = layers.lastIndex
-    }
-
-    fun deleteLayer() {
-        if (layers.size > 1) {
-            saveUndo()
-            layers = layers.toMutableList().also { it.removeAt(selectedLayer) }
-            selectedLayer = max(0, selectedLayer - 1)
-        }
-    }
-
     fun undoAction() {
         if (undo.isNotEmpty()) {
+            redo = redo + layers
             layers = undo.last()
             undo = undo.dropLast(1)
             selectedLayer = selectedLayer.coerceIn(0, layers.lastIndex)
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Text("MotionCanvas") }, actions = {
-            TextButton(onClick = ::undoAction) { Text("Undo") }
-            TextButton(onClick = { scale = 1f; rotation = 0f; pan = Offset.Zero }) { Text("Reset View") }
-        })
+    fun redoAction() {
+        if (redo.isNotEmpty()) {
+            undo = undo + layers
+            layers = redo.last()
+            redo = redo.dropLast(1)
+            selectedLayer = selectedLayer.coerceIn(0, layers.lastIndex)
+        }
+    }
 
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Button(onClick = { brush = Color.Black }) { Text("Pen") }
-            Button(onClick = { brush = Color.Red }) { Text("Red") }
-            Button(onClick = { brush = Color.Blue }) { Text("Blue") }
-            Text("Size " + width.toInt() + " px", modifier = Modifier.padding(10.dp))
+    fun addLayer() {
+        snapshot()
+        layers = layers.toMutableList().also { it.add(ArtLayer("Layer " + (it.size + 1))) }
+        selectedLayer = layers.lastIndex
+    }
+
+    fun deleteLayer() {
+        if (layers.size > 1) {
+            snapshot()
+            layers = layers.toMutableList().also { it.removeAt(selectedLayer) }
+            selectedLayer = max(0, selectedLayer - 1)
+        }
+    }
+
+    fun eraseLastStroke() {
+        val layer = layers[selectedLayer]
+        if (layer.strokes.isNotEmpty()) {
+            snapshot()
+            layers = layers.toMutableList().also {
+                it[selectedLayer] = layer.copy(strokes = layer.strokes.dropLast(1))
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = { Text("MotionCanvas") },
+            actions = {
+                TextButton(enabled = undo.isNotEmpty(), onClick = ::undoAction) { Text("Undo") }
+                TextButton(enabled = redo.isNotEmpty(), onClick = ::redoAction) { Text("Redo") }
+                TextButton(onClick = { scale = 1f; rotation = 0f; pan = Offset.Zero }) { Text("Reset") }
+            }
+        )
+
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilterChip(tool == Tool.BRUSH, { tool = Tool.BRUSH }, label = { Text("Brush") })
+            FilterChip(tool == Tool.ERASER, { tool = Tool.ERASER }, label = { Text("Eraser") })
+            FilterChip(tool == Tool.LINE, { tool = Tool.LINE }, label = { Text("Line") })
+            FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion Skin") })
         }
 
-        Box(Modifier.weight(1f).fillMaxWidth().background(Color.White)
-            .pointerInput(Unit) {
-                detectTransformGestures { _, panChange, zoomChange, rotationChange ->
-                    scale = (scale * zoomChange).coerceIn(0.25f, 8f)
-                    pan += panChange
-                    rotation += rotationChange
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            listOf(Color.Black, Color.Red, Color.Blue, Color.Green, Color.Yellow, Color.Magenta, Color.Cyan, Color.White).forEach { c ->
+                Button(onClick = { brush = c }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Text("●", color = if (c == Color.White) Color.Black else c)
                 }
             }
+        }
+
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Size " + width.toInt() + " px", Modifier.width(100.dp))
+            Slider(width, { width = it }, valueRange = 1f..80f)
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Opacity", Modifier.width(100.dp))
+            Slider(opacity, { opacity = it }, valueRange = 0.05f..1f)
+        }
+
+        Box(
+            Modifier.weight(1f).fillMaxWidth().background(Color.White)
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, panChange, zoomChange, rotationChange ->
+                        scale = (scale * zoomChange).coerceIn(0.25f, 8f)
+                        pan += panChange
+                        rotation += rotationChange
+                    }
+                }
         ) {
-            Canvas(Modifier.fillMaxSize()
-                .graphicsLayer(scaleX = scale, scaleY = scale, rotationZ = rotation, translationX = pan.x, translationY = pan.y)
-                .pointerInput(selectedLayer, brush, width) {
+            Canvas(
+                Modifier.fillMaxSize().graphicsLayer(
+                    scaleX = scale, scaleY = scale, rotationZ = rotation,
+                    translationX = pan.x, translationY = pan.y
+                ).pointerInput(selectedLayer, tool, brush, width, opacity) {
                     detectDragGestures(
                         onDragStart = { current = listOf(it) },
                         onDrag = { change, _ -> current = current + change.position },
@@ -111,15 +178,29 @@ fun MotionCanvasApp() {
                     )
                 }
             ) {
-                layers.forEach { layer ->
-                    if (layer.visible) layer.strokes.forEach { s ->
-                        val path = Path().apply {
-                            if (s.points.isNotEmpty()) {
-                                moveTo(s.points[0].x, s.points[0].y)
-                                s.points.drop(1).forEach { lineTo(it.x, it.y) }
+                layers.forEachIndexed { index, layer ->
+                    if (layer.visible) {
+                        layer.strokes.forEach { s ->
+                            val path = Path().apply {
+                                if (s.points.isNotEmpty()) {
+                                    moveTo(s.points[0].x, s.points[0].y)
+                                    s.points.drop(1).forEach { lineTo(it.x, it.y) }
+                                }
                             }
+                            drawPath(
+                                path, s.color,
+                                alpha = s.opacity * layer.opacity,
+                                style = DrawStroke(s.width, cap = StrokeCap.Round)
+                            )
                         }
-                        drawPath(path, s.color, s.width, alpha = layer.opacity)
+                    }
+                    if (onionSkin && index == selectedLayer - 1 && layer.visible && layer.strokes.isNotEmpty()) {
+                        val s = layer.strokes.last()
+                        val path = Path().apply {
+                            moveTo(s.points[0].x, s.points[0].y)
+                            s.points.drop(1).forEach { lineTo(it.x, it.y) }
+                        }
+                        drawPath(path, Color.Red.copy(alpha = 0.18f), style = DrawStroke(s.width))
                     }
                 }
                 if (current.isNotEmpty()) {
@@ -127,21 +208,24 @@ fun MotionCanvasApp() {
                         moveTo(current[0].x, current[0].y)
                         current.drop(1).forEach { lineTo(it.x, it.y) }
                     }
-                    drawPath(path, brush, width)
+                    drawPath(path, if (tool == Tool.ERASER) Color.White else brush, opacity,
+                        style = DrawStroke(width, cap = StrokeCap.Round))
                 }
             }
         }
 
-        Row(Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(4f, 8f, 12f, 20f, 32f).forEach { w ->
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Button(onClick = ::eraseLastStroke) { Text("Erase Stroke") }
+            listOf(4f, 8f, 12f, 20f, 32f, 48f).forEach { w ->
                 Button(onClick = { width = w }) { Text(w.toInt().toString()) }
             }
         }
 
         Row(Modifier.fillMaxWidth().padding(6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Button(onClick = ::addLayer) { Text("+ Layer") }
-            Button(onClick = ::deleteLayer) { Text("Delete") }
-            Text("Layers", modifier = Modifier.padding(10.dp))
+            Button(onClick = ::deleteLayer, enabled = layers.size > 1) { Text("Delete") }
+            Text("Layers", Modifier.padding(10.dp))
         }
 
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 180.dp)) {
@@ -149,7 +233,9 @@ fun MotionCanvasApp() {
                 val index = layers.lastIndex - reverseIndex
                 ListItem(
                     headlineContent = { Text(layer.name) },
-                    supportingContent = { Text(if (index == selectedLayer) "Selected" else "Tap to select") },
+                    supportingContent = {
+                        Text(if (index == selectedLayer) "Selected • " + layer.strokes.size + " strokes" else layer.strokes.size.toString() + " strokes")
+                    },
                     modifier = Modifier.clickable { selectedLayer = index }
                 )
             }
