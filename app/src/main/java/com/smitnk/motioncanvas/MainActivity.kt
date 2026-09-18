@@ -163,6 +163,10 @@ fun MotionCanvasApp() {
     var radialSymmetry by remember { mutableStateOf(false) }
     var radialCount by remember { mutableIntStateOf(6) }
     var alphaLock by remember { mutableStateOf(false) }
+    var showGrid by remember { mutableStateOf(false) }
+    var gridType by remember { mutableStateOf("2D") }
+    var gridSpacing by remember { mutableFloatStateOf(100f) }
+    var perspectivePoints by remember { mutableIntStateOf(1) }
     var pingPong by remember { mutableStateOf(false) }
     var playDirection by remember { mutableIntStateOf(1) }
     data class EditorSnapshot(
@@ -513,6 +517,7 @@ fun MotionCanvasApp() {
                 val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG or AndroidPaint.DITHER_FLAG)
                 paint.color = if (tool == Tool.ERASER) android.graphics.Color.TRANSPARENT else brush.toArgb()
                 paint.alpha = (opacity.coerceIn(0f, 1f) * 255f).toInt()
+                if (alphaLock && tool == Tool.BRUSH) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
                 paint.style = AndroidPaint.Style.STROKE
                 paint.strokeWidth = when (brushType) {
                     "Pen" -> width
@@ -830,6 +835,20 @@ fun MotionCanvasApp() {
             FilterChip(symmetry, { symmetry = !symmetry }, label = { Text("Mirror") })
             FilterChip(radialSymmetry, { radialSymmetry = !radialSymmetry }, label = { Text("Radial") })
             FilterChip(alphaLock, { alphaLock = !alphaLock }, label = { Text("Alpha Lock") })
+            FilterChip(showGrid, { showGrid = !showGrid }, label = { Text("Grid") })
+        }
+
+        if (showGrid) {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(gridType == "2D", { gridType = "2D" }, label = { Text("2D") })
+                FilterChip(gridType == "ISO", { gridType = "ISO" }, label = { Text("Isometric") })
+                FilterChip(gridType == "PERSPECTIVE", { gridType = "PERSPECTIVE" }, label = { Text("Perspective") })
+                Text("Grid " + gridSpacing.toInt())
+                Slider(gridSpacing, { gridSpacing = it }, valueRange = 40f..240f, modifier = Modifier.width(130.dp))
+                if (gridType == "PERSPECTIVE") listOf(1, 2, 3).forEach { n ->
+                    FilterChip(perspectivePoints == n, { perspectivePoints = n }, label = { Text(n.toString() + "P") })
+                }
+            }
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -979,6 +998,29 @@ fun MotionCanvasApp() {
                         rotate(rotation) {
                             scale(baseScale * scale, baseScale * scale, Offset.Zero) {
                                 translate(left = -rasterWidth / 2f, top = -rasterHeight / 2f) {
+                    if (showGrid) {
+                        val step = gridSpacing.coerceAtLeast(20f)
+                        if (gridType == "2D") {
+                            var gx = 0f
+                            while (gx <= rasterWidth) { drawLine(Color.Gray.copy(alpha = 0.22f), Offset(gx, 0f), Offset(gx, rasterHeight.toFloat()), 1f); gx += step }
+                            var gy = 0f
+                            while (gy <= rasterHeight) { drawLine(Color.Gray.copy(alpha = 0.22f), Offset(0f, gy), Offset(rasterWidth.toFloat(), gy), 1f); gy += step }
+                        } else if (gridType == "ISO") {
+                            var gx = -rasterHeight.toFloat()
+                            while (gx <= rasterWidth) { drawLine(Color.Gray.copy(alpha = 0.18f), Offset(gx, 0f), Offset(gx + rasterHeight, rasterHeight.toFloat()), 1f); gx += step }
+                            var gx2 = 0f
+                            while (gx2 <= rasterWidth + rasterHeight) { drawLine(Color.Gray.copy(alpha = 0.18f), Offset(gx2, 0f), Offset(gx2 - rasterHeight, rasterHeight.toFloat()), 1f); gx2 += step }
+                        } else {
+                            val center = Offset(rasterWidth / 2f, rasterHeight / 2f)
+                            val vps = when (perspectivePoints) {
+                                1 -> listOf(Offset(rasterWidth / 2f, -500f))
+                                2 -> listOf(Offset(-500f, rasterHeight / 2f), Offset(rasterWidth + 500f, rasterHeight / 2f))
+                                else -> listOf(Offset(-500f, -400f), Offset(rasterWidth + 500f, -400f), Offset(rasterWidth / 2f, rasterHeight + 1500f))
+                            }
+                            vps.forEach { vp -> drawLine(Color.Gray.copy(alpha = 0.28f), center, vp, 1.5f) }
+                        }
+                    }
+
                     if (onionSkin && frameIndex > 0) {
                         frameData[frameIndex - 1].layers.forEach { layer ->
                             layer.strokes.forEach { s -> drawStroke(this, s, Color.Red.copy(alpha = 0.14f)) }
