@@ -766,6 +766,29 @@ fun MotionCanvasApp() {
         selectedTransformBox = to
     }
 
+    fun duplicateSelectedStrokes() {
+        if (selectedStrokeIds.isEmpty()) return
+        snapshot()
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val duplicates = selectedStrokeIds.sorted().mapNotNull { strokes.getOrNull(it) }.map { stroke ->
+            stroke.copy(
+                points = stroke.points.map { it + Offset(24f, 24f) },
+                inHandles = stroke.inHandles.toList(),
+                outHandles = stroke.outHandles.toList(),
+                pressures = stroke.pressures.toList()
+            )
+        }
+        if (duplicates.isEmpty()) return
+        val start = strokes.size
+        currentStrokes = currentStrokes.toMutableList().also { layers ->
+            layers[selectedLayer] = strokes + duplicates
+        }
+        selectedStrokeIds = (start until start + duplicates.size).toSet()
+        selectedTransformBox = SelectionGeometry.strokeBounds(duplicates)?.toTransformBox()
+        selection = emptyList()
+        saveFrame()
+    }
+
     fun deleteSelectedStrokes() {
         if (selectedStrokeIds.isEmpty()) return
         snapshot()
@@ -1501,6 +1524,7 @@ fun MotionCanvasApp() {
             Button(onClick = { lockTransformAspect = !lockTransformAspect }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (lockTransformAspect) "Ratio On" else "Ratio Off") }
             Button(onClick = { snapTransformRotation = !snapTransformRotation }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (snapTransformRotation) "Snap On" else "Snap Off") }
             Button(onClick = { additiveSelect = !additiveSelect }) { Text(if (additiveSelect) "Multi On" else "Multi Off") }
+            Button(onClick = ::duplicateSelectedStrokes, enabled = selectedStrokeIds.isNotEmpty()) { Text("Duplicate") }
             Button(onClick = ::deleteSelectedStrokes, enabled = selectedStrokeIds.isNotEmpty()) { Text("Delete") }
             Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList(); selectedTransformBox = null }) { Text("Clear") }
         }
