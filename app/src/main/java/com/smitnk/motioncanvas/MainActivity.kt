@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.awaitEachGesture
 import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.platform.LocalContext
@@ -134,6 +135,9 @@ fun MotionCanvasApp() {
     var streamline by remember { mutableFloatStateOf(0.35f) }
     var deepBrushEngine by remember { mutableStateOf(true) }
     var quickShape by remember { mutableStateOf(true) }
+    var editStrokeIndex by remember { mutableStateOf<Int?>(null) }
+    var editNodeIndex by remember { mutableIntStateOf(-1) }
+    var editShapeLabel by remember { mutableStateOf("Edit Shape") }
     var spacing by remember { mutableFloatStateOf(0.18f) }
     var taper by remember { mutableFloatStateOf(0f) }
     var shapeFilled by remember { mutableStateOf(false) }
@@ -327,6 +331,29 @@ fun MotionCanvasApp() {
         bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     }
 
+    fun nearestEditNode(point: Offset): Int {
+        val index = editStrokeIndex ?: return -1
+        val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(index)?.points ?: return -1
+        if (nodes.isEmpty()) return -1
+        var best = -1
+        var bestDistance = Float.MAX_VALUE
+        nodes.forEachIndexed { i, node ->
+            val dx = node.x - point.x
+            val dy = node.y - point.y
+            val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+            if (distance < bestDistance) { bestDistance = distance; best = i }
+        }
+        return if (bestDistance <= 42f) best else -1
+    }
+
+    fun finishShapeEditing() {
+        if (editStrokeIndex != null) {
+            saveFrame()
+            editStrokeIndex = null
+            editNodeIndex = -1
+        }
+    }
+
     fun commitStroke() {
         if (tool == Tool.FILL && current.isNotEmpty()) {
             snapshot()
@@ -461,6 +488,15 @@ fun MotionCanvasApp() {
 
             currentStrokes = updated
             saveFrame()
+            if (tool == Tool.LINE || tool == Tool.RECTANGLE || tool == Tool.ELLIPSE) {
+                editStrokeIndex = updated[selectedLayer].lastIndex
+                editNodeIndex = -1
+                editShapeLabel = when (tool) {
+                    Tool.LINE -> "Edit Line"
+                    Tool.ELLIPSE -> "Edit Arc"
+                    else -> "Edit Shape"
+                }
+            }
         }
         current = emptyList()
         currentPressures = emptyList()
@@ -655,21 +691,57 @@ fun MotionCanvasApp() {
                         }
                     }
             ) {
+                Box(Modifier.fillMaxSize()) {
                 Canvas(
-                    Modifier.fillMaxSize().onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, streamline, pressureEnabled, spacing, taper, quickShape) {
+                    Modifier.fillMaxSize()
+                        .pointerInput(editStrokeIndex) {
+                            detectTapGestures { tap ->
+                                if (editStrokeIndex != null && nearestEditNode(screenToArt(tap)) < 0) {
+                                    finishShapeEditing()
+                                }
+                            }
+                        }
+                        .onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, streamline, pressureEnabled, spacing, taper, quickShape, editStrokeIndex) {
                         detectDragGestures(
                             onDragStart = { start ->
-                                current = listOf(start)
-                                if (tool == Tool.SELECT) selection = listOf(start)
+                                val artStart = screenToArt(start)
+                                if (editStrokeIndex != null) {
+                                    editNodeIndex = nearestEditNode(artStart)
+                                    if (editNodeIndex >= 0) snapshot()
+                                } else {
+                                    current = listOf(artStart)
+                                    if (tool == Tool.SELECT) selection = listOf(artStart)
+                                }
                             },
                             onDrag = { change, _ ->
-                                current = current + screenToArt(change.position)
-                                if (tool == Tool.SELECT) selection = selection + screenToArt(change.position)
+                                val artPoint = screenToArt(change.position)
+                                if (editStrokeIndex != null && editNodeIndex >= 0) {
+                                    val strokeIndex = editStrokeIndex!!
+                                    val strokes = currentStrokes[selectedLayer]
+                                    if (strokeIndex in strokes.indices) {
+                                        val updatedStroke = strokes[strokeIndex].copy(
+                                            points = strokes[strokeIndex].points.toMutableList().also { it[editNodeIndex] = artPoint }
+                                        )
+                                        currentStrokes = currentStrokes.toMutableList().also {
+                                            it[selectedLayer] = strokes.toMutableList().also { list -> list[strokeIndex] = updatedStroke }
+                                        }
+                                    }
+                                } else {
+                                    current = current + artPoint
+                                    if (tool == Tool.SELECT) selection = selection + artPoint
+                                }
                             },
                             onDragEnd = {
-                                if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
+                                if (editStrokeIndex != null) {
+                                    saveFrame()
+                                    editNodeIndex = -1
+                                } else if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
                             },
-                            onDragCancel = { current = emptyList(); selection = emptyList() }
+                            onDragCancel = {
+                                current = emptyList()
+                                selection = emptyList()
+                                editNodeIndex = -1
+                            }
                         )
                     }
                 ) {
@@ -729,6 +801,13 @@ fun MotionCanvasApp() {
                             }
                         }
                     }
+                }
+                if (editStrokeIndex != null) {
+                    Button(
+                        onClick = { finishShapeEditing() },
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                    ) { Text(editShapeLabel) }
+                }
                 }
             }
 
