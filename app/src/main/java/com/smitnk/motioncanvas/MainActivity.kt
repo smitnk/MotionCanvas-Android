@@ -42,6 +42,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -1452,8 +1455,6 @@ fun MotionCanvasApp() {
             Button(onClick = ::deleteFrame, enabled = frameData.size > 1) { Text("Delete") }
         }
     }
-}
-
 }
 
 private fun sizeOfCanvasFallback(axis: Float): Float = 500f * axis
