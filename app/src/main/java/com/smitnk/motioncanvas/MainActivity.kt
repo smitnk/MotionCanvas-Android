@@ -216,7 +216,7 @@ fun MotionCanvasApp() {
         val c = cos(r); val s = sin(r)
         return Offset(
             (dx * c - dy * s) / (base * canvasScale) + rasterWidth / 2f,
-            (dx * s + dy * c) / (base * scale) + rasterHeight / 2f
+            (dx * s + dy * c) / (base * canvasScale) + rasterHeight / 2f
         )
     }
 
@@ -270,7 +270,7 @@ fun MotionCanvasApp() {
             frameData = List(count) { Frame(layers.map { LayerFrame() }) }
             frameIndex = 0
             currentStrokes = layers.indices.map { frameData[0].layers.getOrNull(it)?.strokes ?: emptyList() }
-            loadRasterFrame(0)
+            rasterLayers = rasterFrames[0].map { bitmap -> copyBitmap(bitmap) }
             selectedStrokeIds = emptySet()
             selection = emptyList()
             exportStatus = "Project loaded"
@@ -1130,7 +1130,7 @@ fun MotionCanvasApp() {
                 Modifier.weight(1f).fillMaxHeight().background(Color.White)
                     .pointerInput(Unit) {
                         detectTransformGestures { _, panChange, zoomChange, rotationChange ->
-                            scale = (scale * zoomChange).coerceIn(0.25f, 8f)
+                            canvasScale = (canvasScale * zoomChange).coerceIn(0.25f, 8f)
                             pan += panChange
                             rotation += rotationChange
                         }
@@ -1238,7 +1238,7 @@ fun MotionCanvasApp() {
                     }
                 ) {
                     val baseScale = artScale()
-                    withTransform({
+                    androidx.compose.ui.graphics.drawscope.withTransform({
                         translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y)
                         rotate(degrees = rotation)
                         scale(scaleX = baseScale * canvasScale, scaleY = baseScale * canvasScale, pivot = Offset.Zero)
@@ -1349,7 +1349,8 @@ fun MotionCanvasApp() {
                         drawStroke(
                             this,
                             Stroke(points = preview, color = if (tool == Tool.ERASER) Color.White else brush, width = width, opacity = opacity,
-                                closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE)
+                                closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE),
+                            color = if (tool == Tool.ERASER) Color.White else brush
                         )
                     }
                     }
@@ -1470,7 +1471,7 @@ private fun drawStroke(
                 val b = stroke.points[i + 1]
                 val c1 = Offset(a.x + stroke.outHandles[i].x, a.y + stroke.outHandles[i].y)
                 val c2 = Offset(b.x + stroke.inHandles[i + 1].x, b.y + stroke.inHandles[i + 1].y)
-                path.cubicTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y)
+                cubicTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y)
             }
         } else stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
         if (stroke.closed) close()
