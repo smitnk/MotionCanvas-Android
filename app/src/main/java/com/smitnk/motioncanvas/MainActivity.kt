@@ -134,6 +134,8 @@ fun MotionCanvasApp() {
     var activeTransformInteraction by remember { mutableStateOf<TransformInteraction?>(null) }
     var transformDragStart by remember { mutableStateOf<Offset?>(null) }
     var transformSourceBox by remember { mutableStateOf<TransformBox?>(null) }
+    var lockTransformAspect by remember { mutableStateOf(false) }
+    var snapTransformRotation by remember { mutableStateOf(false) }
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
     var showColorPicker by remember { mutableStateOf(false) }
@@ -1478,7 +1480,9 @@ fun MotionCanvasApp() {
             Button(onClick = { transformSelection(1.1f, 0f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("Scale +") }
             Button(onClick = { transformSelection(1f, -15f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("↶") }
             Button(onClick = { transformSelection(1f, 15f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("↷") }
-            Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList() }) { Text("Clear") }
+            Button(onClick = { lockTransformAspect = !lockTransformAspect }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (lockTransformAspect) "Ratio On" else "Ratio Off") }
+            Button(onClick = { snapTransformRotation = !snapTransformRotation }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (snapTransformRotation) "Snap On" else "Snap Off") }
+            Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList(); selectedTransformBox = null }) { Text("Clear") }
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
