@@ -789,6 +789,34 @@ fun MotionCanvasApp() {
         saveFrame()
     }
 
+    fun flipSelectedHorizontal() {
+        if (selectedStrokeIds.isEmpty()) return
+        snapshot()
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val selectionState = StrokeSelection(selectedStrokeIds, selectedTransformBox)
+        currentStrokes = currentStrokes.toMutableList().also { layers ->
+            layers[selectedLayer] = TransformActions.flipHorizontal(strokes, selectionState)
+        }
+        selectedTransformBox = selectedTransformBox?.let { box ->
+            box.copy(rotationDegrees = box.rotationDegrees)
+        }
+        saveFrame()
+    }
+
+    fun flipSelectedVertical() {
+        if (selectedStrokeIds.isEmpty()) return
+        snapshot()
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val selectionState = StrokeSelection(selectedStrokeIds, selectedTransformBox)
+        currentStrokes = currentStrokes.toMutableList().also { layers ->
+            layers[selectedLayer] = TransformActions.flipVertical(strokes, selectionState)
+        }
+        selectedTransformBox = selectedTransformBox?.let { box ->
+            box.copy(rotationDegrees = box.rotationDegrees)
+        }
+        saveFrame()
+    }
+
     fun deleteSelectedStrokes() {
         if (selectedStrokeIds.isEmpty()) return
         snapshot()
@@ -1525,6 +1553,8 @@ fun MotionCanvasApp() {
             Button(onClick = { snapTransformRotation = !snapTransformRotation }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (snapTransformRotation) "Snap On" else "Snap Off") }
             Button(onClick = { additiveSelect = !additiveSelect }) { Text(if (additiveSelect) "Multi On" else "Multi Off") }
             Button(onClick = ::duplicateSelectedStrokes, enabled = selectedStrokeIds.isNotEmpty()) { Text("Duplicate") }
+            Button(onClick = ::flipSelectedHorizontal, enabled = selectedStrokeIds.isNotEmpty()) { Text("Flip H") }
+            Button(onClick = ::flipSelectedVertical, enabled = selectedStrokeIds.isNotEmpty()) { Text("Flip V") }
             Button(onClick = ::deleteSelectedStrokes, enabled = selectedStrokeIds.isNotEmpty()) { Text("Delete") }
             Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList(); selectedTransformBox = null }) { Text("Clear") }
         }
