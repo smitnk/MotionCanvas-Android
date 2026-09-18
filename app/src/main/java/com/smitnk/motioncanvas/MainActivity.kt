@@ -60,6 +60,8 @@ import com.squareup.gifencoder.ImageOptions
 
 data class Stroke(
     val points: List<Offset>,
+    val inHandles: List<Offset> = emptyList(),
+    val outHandles: List<Offset> = emptyList(),
     val pressures: List<Float> = emptyList(),
     val color: Color,
     val width: Float,
@@ -148,6 +150,9 @@ fun MotionCanvasApp() {
     var editStrokeIndex by remember { mutableStateOf<Int?>(null) }
     var editNodeIndex by remember { mutableIntStateOf(-1) }
     var nodeEditorMode by remember { mutableStateOf(false) }
+    var bezierHandleMode by remember { mutableStateOf(false) }
+    var activeHandle by remember { mutableIntStateOf(-1) }
+    var activeHandleSide by remember { mutableStateOf("out") }
     var editShapeLabel by remember { mutableStateOf("Edit Shape") }
     var weightPaintMode by remember { mutableStateOf(false) }
     var weightJoint by remember { mutableIntStateOf(-1) }
@@ -374,6 +379,41 @@ fun MotionCanvasApp() {
             if (distance < bestDistance) { bestDistance = distance; best = i }
         }
         return if (bestDistance <= 42f) best else -1
+    }
+
+    fun ensureBezierHandles(stroke: Stroke): Stroke {
+        if (stroke.points.isEmpty()) return stroke
+        if (stroke.inHandles.size == stroke.points.size && stroke.outHandles.size == stroke.points.size) return stroke
+        val ins = stroke.points.mapIndexed { i, p ->
+            if (i == 0) Offset.Zero else Offset((stroke.points[i - 1].x - p.x) * 0.25f, (stroke.points[i - 1].y - p.y) * 0.25f)
+        }
+        val outs = stroke.points.mapIndexed { i, p ->
+            if (i == stroke.points.lastIndex) Offset.Zero else Offset((stroke.points[i + 1].x - p.x) * 0.25f, (stroke.points[i + 1].y - p.y) * 0.25f)
+        }
+        return stroke.copy(inHandles = ins, outHandles = outs)
+    }
+
+    fun updateBezierHandle(point: Offset, side: String) {
+        val index = editStrokeIndex ?: return
+        val node = editNodeIndex
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices || node !in strokes[index].points.indices) return
+        val stroke = ensureBezierHandles(strokes[index])
+        val delta = Offset(point.x - stroke.points[node].x, point.y - stroke.points[node].y)
+        val ins = stroke.inHandles.toMutableList()
+        val outs = stroke.outHandles.toMutableList()
+        if (side == "in") ins[node] = delta else outs[node] = delta
+        val updated = stroke.copy(inHandles = ins, outHandles = outs)
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = updated }
+        }
+    }
+
+    fun addBezierNodeAndHandles() {
+        val index = editStrokeIndex ?: return
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices || strokes[index].points.size < 2) return
+        addEditNode()
     }
 
     fun addEditNode() {
@@ -1054,6 +1094,24 @@ fun MotionCanvasApp() {
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
                                 if (editStrokeIndex != null) {
+                                    if (nodeEditorMode && bezierHandleMode) {
+                                        val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)?.points.orEmpty()
+                                        var bestNode = -1
+                                        var bestDist = Float.MAX_VALUE
+                                        nodes.forEachIndexed { n, p ->
+                                            val dx = p.x - artStart.x; val dy = p.y - artStart.y
+                                            val d = dx * dx + dy * dy
+                                            if (d < bestDist) { bestDist = d; bestNode = n }
+                                        }
+                                        if (bestNode >= 0 && bestDist <= 44f * 44f) {
+                                            snapshot()
+                                            editNodeIndex = bestNode
+                                            activeHandle = bestNode
+                                            activeHandleSide = "out"
+                                        } else {
+                                            activeHandle = -1
+                                        }
+                                    }
                                     ensureWeightJoints()
                                     if (sculptMode) {
                                         if (!sculptSnapshotTaken) { snapshot(); sculptSnapshotTaken = true }
@@ -1076,7 +1134,9 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (editStrokeIndex != null && sculptMode) {
+                                if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
+                                    updateBezierHandle(artPoint, activeHandleSide)
+                                } else if (editStrokeIndex != null && sculptMode) {
                                     sculptStroke(artPoint, change.position - change.previousPosition)
                                 } else if (editStrokeIndex != null && weightPaintMode && weightJoint >= 0) {
                                     poseWeightJoint(artPoint)
@@ -1099,6 +1159,7 @@ fun MotionCanvasApp() {
                             onDragEnd = {
                                 if (editStrokeIndex != null) {
                                     saveFrame()
+                                    activeHandle = -1
                                     editNodeIndex = -1
                                     weightJoint = -1
                                     sculptSnapshotTaken = false
@@ -1157,6 +1218,18 @@ fun MotionCanvasApp() {
                         weightJoints.forEachIndexed { i, joint ->
                             drawCircle(if (i == weightJoint) Color.Yellow else Color.Cyan, radius = 14f, center = joint)
                             drawCircle(Color.DarkGray, radius = 5f, center = joint)
+                        }
+                    }
+
+                    if (nodeEditorMode && bezierHandleMode && editStrokeIndex != null) {
+                        val s = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)
+                        if (s != null) {
+                            val b = ensureBezierHandles(s)
+                            b.points.forEachIndexed { n, p ->
+                                val ih = b.inHandles[n]; val oh = b.outHandles[n]
+                                if (ih != Offset.Zero) { drawLine(Color.Magenta.copy(alpha = 0.55f), p, p + ih, 2f); drawCircle(Color.Magenta, 7f, p + ih) }
+                                if (oh != Offset.Zero) { drawLine(Color.Magenta.copy(alpha = 0.55f), p, p + oh, 2f); drawCircle(Color.Magenta, 7f, p + oh) }
+                            }
                         }
                     }
 
@@ -1223,6 +1296,7 @@ fun MotionCanvasApp() {
                             Button(onClick = { addEditNode() }, enabled = nodeEditorMode) { Text("Add") }
                             Button(onClick = { deleteEditNode() }, enabled = nodeEditorMode && editNodeIndex >= 0) { Text("Delete") }
                             Button(onClick = { respaceEditNodes() }, enabled = nodeEditorMode) { Text("Re-space") }
+                            Button(onClick = { bezierHandleMode = !bezierHandleMode }, enabled = nodeEditorMode) { Text(if (bezierHandleMode) "Bezier On" else "Bezier") }
                         }
                     }
                 }
@@ -1313,7 +1387,15 @@ private fun drawStroke(
     if (stroke.points.isEmpty()) return
     val path = Path().apply {
         moveTo(stroke.points[0].x, stroke.points[0].y)
-        stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
+        if (stroke.inHandles.size == stroke.points.size && stroke.outHandles.size == stroke.points.size) {
+            for (i in 0 until stroke.points.lastIndex) {
+                val a = stroke.points[i]
+                val b = stroke.points[i + 1]
+                val c1 = Offset(a.x + stroke.outHandles[i].x, a.y + stroke.outHandles[i].y)
+                val c2 = Offset(b.x + stroke.inHandles[i + 1].x, b.y + stroke.inHandles[i + 1].y)
+                path.cubicTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y)
+            }
+        } else stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
         if (stroke.closed) close()
     }
     if (stroke.filled && !outline) {
