@@ -21,11 +21,19 @@ object StrokeSelectionEngine {
         var bestDistance = tolerance
 
         strokes.forEachIndexed { index, stroke ->
-            stroke.points.forEach { sample ->
-                val distance = distance(point, sample)
-                if (distance <= bestDistance) {
-                    bestDistance = distance
+            if (stroke.points.size == 1) {
+                val d = distance(point, stroke.points.first())
+                if (d <= bestDistance) {
+                    bestDistance = d
                     bestIndex = index
+                }
+            } else {
+                for (i in 0 until stroke.points.lastIndex) {
+                    val d = distanceToSegment(point, stroke.points[i], stroke.points[i + 1])
+                    if (d <= bestDistance) {
+                        bestDistance = d
+                        bestIndex = index
+                    }
                 }
             }
         }
@@ -90,4 +98,15 @@ object StrokeSelectionEngine {
 
     private fun distance(a: Offset, b: Offset): Float =
         sqrt((a.x - b.x).pow(2) + (a.y - b.y).pow(2))
+
+    private fun distanceToSegment(point: Offset, a: Offset, b: Offset): Float {
+        val dx = b.x - a.x
+        val dy = b.y - a.y
+        val lengthSquared = dx * dx + dy * dy
+        if (lengthSquared <= 0.0001f) return distance(point, a)
+        val t = (((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared)
+            .coerceIn(0f, 1f)
+        val projection = Offset(a.x + t * dx, a.y + t * dy)
+        return distance(point, projection)
+    }
 }
