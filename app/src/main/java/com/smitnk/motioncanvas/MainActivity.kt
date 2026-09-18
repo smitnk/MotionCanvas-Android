@@ -34,7 +34,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.awaitEachGesture
+import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.unit.dp
+import android.view.MotionEvent
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -43,6 +46,7 @@ import kotlin.math.sin
 
 data class Stroke(
     val points: List<Offset>,
+    val pressures: List<Float> = emptyList(),
     val color: Color,
     val width: Float,
     val opacity: Float = 1f,
@@ -107,10 +111,13 @@ fun MotionCanvasApp() {
     var rasterFrames by remember { mutableStateOf(listOf(listOf(Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)))) }
     var selectedLayer by remember { mutableIntStateOf(0) }
     var current by remember { mutableStateOf(emptyList<Offset>()) }
+    var currentPressures by remember { mutableStateOf(emptyList<Float>()) }
     var selection by remember { mutableStateOf(emptyList<Offset>()) }
     var selectedStrokeIds by remember { mutableStateOf(emptySet<Int>()) }
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
+    var brushType by remember { mutableStateOf("Pencil") }
+    var pressureEnabled by remember { mutableStateOf(true) }
     var width by remember { mutableFloatStateOf(10f) }
     var opacity by remember { mutableFloatStateOf(1f) }
     var stabilization by remember { mutableFloatStateOf(0.35f) }
@@ -207,19 +214,37 @@ fun MotionCanvasApp() {
                 paint.color = if (tool == Tool.ERASER) android.graphics.Color.TRANSPARENT else brush.toArgb()
                 paint.alpha = (opacity.coerceIn(0f, 1f) * 255f).toInt()
                 paint.style = AndroidPaint.Style.STROKE
-                paint.strokeWidth = width.coerceAtLeast(1f)
+                paint.strokeWidth = when (brushType) {
+                    "Pen" -> width
+                    "Marker" -> width * 1.35f
+                    "Airbrush" -> width * 1.8f
+                    else -> width
+                }.coerceAtLeast(1f)
                 paint.strokeCap = AndroidPaint.Cap.ROUND
                 paint.strokeJoin = AndroidPaint.Join.ROUND
                 if (tool == Tool.ERASER) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
                 val path = android.graphics.Path()
                 path.moveTo(points.first().x, points.first().y)
                 points.drop(1).forEach { path.lineTo(it.x, it.y) }
-                androidCanvas.drawPath(path, paint)
+                if (pressureEnabled && currentPressures.isNotEmpty() && brushType != "Marker") {
+                    val pressures = currentPressures
+                    for (i in 0 until minOf(points.size, pressures.size)) {
+                        val p = pressures[i].coerceIn(0.05f, 1.25f)
+                        val pressurePaint = AndroidPaint(paint)
+                        pressurePaint.strokeWidth = width * (0.45f + p * 0.85f)
+                        pressurePaint.alpha = (opacity.coerceIn(0f, 1f) * (0.45f + p * 0.55f) * 255f).toInt()
+                        if (i == 0) androidCanvas.drawCircle(points[i].x, points[i].y, pressurePaint.strokeWidth / 2f, pressurePaint)
+                        else androidCanvas.drawLine(points[i-1].x, points[i-1].y, points[i].x, points[i].y, pressurePaint)
+                    }
+                } else {
+                    androidCanvas.drawPath(path, paint)
+                }
                 rasterLayers = rasterLayers.toMutableList().also { it[selectedLayer] = bitmap }
                 saveRasterFrame()
             }
             val stroke = Stroke(
                 points,
+                currentPressures,
                 if (tool == Tool.ERASER) Color.Transparent else brush,
                 width,
                 opacity,
@@ -234,13 +259,14 @@ fun MotionCanvasApp() {
             if (symmetry && tool != Tool.SELECT) {
                 val axisX = sizeOfCanvasFallback(symmetryAxis)
                 val mirrored = points.map { p -> Offset(axisX - (p.x - axisX), p.y) }
-                updated[selectedLayer] = updated[selectedLayer] + stroke.copy(points = mirrored)
+                updated[selectedLayer] = updated[selectedLayer] + stroke.copy(points = mirrored, pressures = currentPressures)
             }
 
             currentStrokes = updated
             saveFrame()
         }
         current = emptyList()
+        currentPressures = emptyList()
     }
 
     fun transformSelection(scaleFactor: Float, degrees: Float, delta: Offset) {
@@ -361,6 +387,10 @@ fun MotionCanvasApp() {
             FilterChip(tool == Tool.ELLIPSE, { tool = Tool.ELLIPSE }, label = { Text("Ellipse") })
             FilterChip(tool == Tool.SELECT, { tool = Tool.SELECT }, label = { Text("Lasso") })
             FilterChip(tool == Tool.FILL, { tool = Tool.FILL }, label = { Text("Fill") })
+            FilterChip(brushType == "Pencil", { brushType = "Pencil" }, label = { Text("Pencil") })
+            FilterChip(brushType == "Pen", { brushType = "Pen" }, label = { Text("Pen") })
+            FilterChip(brushType == "Marker", { brushType = "Marker" }, label = { Text("Marker") })
+            FilterChip(brushType == "Airbrush", { brushType = "Airbrush" }, label = { Text("Airbrush") })
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
         }
 
@@ -464,7 +494,7 @@ fun MotionCanvasApp() {
                         }
                         drawStroke(
                             this,
-                            Stroke(preview, if (tool == Tool.ERASER) Color.White else brush, width, opacity,
+                            Stroke(preview, if (tool == Tool.ERASER) Color.White else brush, emptyList(), width, opacity,
                                 closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE)
                         )
                     }
