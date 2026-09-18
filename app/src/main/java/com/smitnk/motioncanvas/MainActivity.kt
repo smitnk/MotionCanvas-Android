@@ -131,6 +131,9 @@ fun MotionCanvasApp() {
     var width by remember { mutableFloatStateOf(10f) }
     var opacity by remember { mutableFloatStateOf(1f) }
     var stabilization by remember { mutableFloatStateOf(0.35f) }
+    var streamline by remember { mutableFloatStateOf(0.35f) }
+    var deepBrushEngine by remember { mutableStateOf(true) }
+    var quickShape by remember { mutableStateOf(true) }
     var spacing by remember { mutableFloatStateOf(0.18f) }
     var taper by remember { mutableFloatStateOf(0f) }
     var shapeFilled by remember { mutableStateOf(false) }
@@ -387,6 +390,15 @@ fun MotionCanvasApp() {
                     }
                 }
             }
+            if (quickShape && (tool == Tool.BRUSH || tool == Tool.ERASER) && points.size >= 6) {
+                // Quick Shape: when enabled, gently regularize nearly straight strokes.
+                val a = points.first(); val b = points.last()
+                val dx = b.x - a.x; val dy = b.y - a.y
+                if (kotlin.math.abs(dx) > kotlin.math.abs(dy) * 6f || kotlin.math.abs(dy) > kotlin.math.abs(dx) * 6f) {
+                    val snapped = if (kotlin.math.abs(dx) >= kotlin.math.abs(dy)) points.map { Offset(it.x, a.y + (b.y-a.y) * ((it.x-a.x)/(dx.takeIf { it != 0f } ?: 1f))) } else points.map { Offset(a.x + (b.x-a.x) * ((it.y-a.y)/(dy.takeIf { it != 0f } ?: 1f)), it.y) }
+                    current = snapped
+                }
+            }
             if (tool == Tool.BRUSH || tool == Tool.ERASER) {
                 val bitmap = rasterLayers[selectedLayer]
                 val androidCanvas = AndroidCanvas(bitmap)
@@ -398,8 +410,13 @@ fun MotionCanvasApp() {
                     "Pen" -> width
                     "Marker" -> width * 1.35f
                     "Airbrush" -> width * 1.8f
+                    "Pencil" -> width * 0.82f
                     else -> width
                 }.coerceAtLeast(1f)
+                if (deepBrushEngine) {
+                    paint.strokeMiter = 4f
+                    paint.isSubpixelText = true
+                }
                 paint.strokeCap = AndroidPaint.Cap.ROUND
                 paint.strokeJoin = AndroidPaint.Join.ROUND
                 if (tool == Tool.ERASER) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
@@ -605,6 +622,15 @@ fun MotionCanvasApp() {
             Text((stabilization * 100).toInt().toString() + "%")
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Streamline", Modifier.width(75.dp))
+            Slider(streamline, { streamline = it }, valueRange = 0f..0.9f)
+            Text((streamline * 100).toInt().toString() + "%")
+        }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(deepBrushEngine, { deepBrushEngine = !deepBrushEngine }, label = { Text("Deep Brush") })
+            FilterChip(quickShape, { quickShape = !quickShape }, label = { Text("Quick Shape") })
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Spacing", Modifier.width(75.dp))
             Slider(spacing, { spacing = it }, valueRange = 0.05f..0.6f)
             Text((spacing * 100).toInt().toString() + "%")
@@ -630,7 +656,7 @@ fun MotionCanvasApp() {
                     }
             ) {
                 Canvas(
-                    Modifier.fillMaxSize().onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, pressureEnabled, spacing, taper) {
+                    Modifier.fillMaxSize().onSizeChanged { canvasSize = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }.pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, streamline, pressureEnabled, spacing, taper, quickShape) {
                         detectDragGestures(
                             onDragStart = { start ->
                                 current = listOf(start)
