@@ -46,12 +46,29 @@ object SelectionGeometry {
         val rotationDelta = to.rotationDegrees - from.rotationDegrees
 
         return strokes.map { stroke ->
-            val transformed = stroke.points.map { point ->
+            fun transformPoint(point: Offset): Offset {
                 val local = point - from.center
                 val scaled = Offset(local.x * sx, local.y * sy)
-                rotate(scaled, rotationDelta) + to.center
+                return rotate(scaled, rotationDelta) + to.center
             }
-            stroke.copy(points = transformed)
+            fun transformHandle(handle: Offset): Offset {
+                val scaled = Offset(handle.x * sx, handle.y * sy)
+                return rotate(scaled, rotationDelta)
+            }
+
+            val transformed = stroke.points.map(::transformPoint)
+            val transformedInHandles = if (stroke.inHandles.size == stroke.points.size) {
+                stroke.inHandles.map(::transformHandle)
+            } else stroke.inHandles
+            val transformedOutHandles = if (stroke.outHandles.size == stroke.points.size) {
+                stroke.outHandles.map(::transformHandle)
+            } else stroke.outHandles
+
+            stroke.copy(
+                points = transformed,
+                inHandles = transformedInHandles,
+                outHandles = transformedOutHandles
+            )
         }
     }
 
