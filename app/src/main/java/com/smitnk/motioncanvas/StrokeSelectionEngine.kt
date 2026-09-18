@@ -66,6 +66,18 @@ object StrokeSelectionEngine {
         return StrokeSelection(indices, SelectionGeometry.strokeBounds(selected)?.toTransformBox())
     }
 
+    fun toggleSelection(
+        strokes: List<Stroke>,
+        point: Offset,
+        tolerance: Float = 28f,
+        current: Set<Int> = emptySet()
+    ): StrokeSelection {
+        val hit = hitTest(strokes, point, tolerance) ?: return StrokeSelection(current, SelectionGeometry.strokeBounds(current.mapNotNull { strokes.getOrNull(it) })?.toTransformBox())
+        val indices = if (hit in current) current - hit else current + hit
+        val selected = indices.mapNotNull { strokes.getOrNull(it) }
+        return StrokeSelection(indices, SelectionGeometry.strokeBounds(selected)?.toTransformBox())
+    }
+
     fun selectWithin(
         strokes: List<Stroke>,
         min: Offset,
