@@ -147,6 +147,7 @@ fun MotionCanvasApp() {
     var quickShape by remember { mutableStateOf(true) }
     var editStrokeIndex by remember { mutableStateOf<Int?>(null) }
     var editNodeIndex by remember { mutableIntStateOf(-1) }
+    var nodeEditorMode by remember { mutableStateOf(false) }
     var editShapeLabel by remember { mutableStateOf("Edit Shape") }
     var weightPaintMode by remember { mutableStateOf(false) }
     var weightJoint by remember { mutableIntStateOf(-1) }
@@ -373,6 +374,66 @@ fun MotionCanvasApp() {
             if (distance < bestDistance) { bestDistance = distance; best = i }
         }
         return if (bestDistance <= 42f) best else -1
+    }
+
+    fun addEditNode() {
+        val index = editStrokeIndex ?: return
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices) return
+        val stroke = strokes[index]
+        if (stroke.points.size < 2) return
+        snapshot()
+        val nodes = stroke.points.toMutableList()
+        val at = (editNodeIndex + 1).coerceIn(1, nodes.size - 1)
+        val a = nodes[at - 1]; val b = nodes[at]
+        nodes.add(at, Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f))
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = stroke.copy(points = nodes) }
+        }
+        editNodeIndex = at
+    }
+
+    fun deleteEditNode() {
+        val index = editStrokeIndex ?: return
+        val node = editNodeIndex
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices || node !in strokes[index].points.indices || strokes[index].points.size <= 2) return
+        snapshot()
+        val nodes = strokes[index].points.toMutableList()
+        nodes.removeAt(node)
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = strokes[index].copy(points = nodes) }
+        }
+        editNodeIndex = (node - 1).coerceAtLeast(0).coerceAtMost(nodes.lastIndex)
+    }
+
+    fun respaceEditNodes() {
+        val index = editStrokeIndex ?: return
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices || strokes[index].points.size < 3) return
+        snapshot()
+        val points = strokes[index].points
+        val cumulative = FloatArray(points.size)
+        for (i in 1 until points.size) {
+            val dx = points[i].x - points[i - 1].x; val dy = points[i].y - points[i - 1].y
+            cumulative[i] = cumulative[i - 1] + kotlin.math.sqrt(dx * dx + dy * dy)
+        }
+        val total = cumulative.last()
+        if (total <= 0f) return
+        val result = (0 until points.size).map { n ->
+            val target = total * n / (points.lastIndex.coerceAtLeast(1))
+            var seg = 1
+            while (seg < cumulative.size && cumulative[seg] < target) seg++
+            if (seg >= cumulative.size) points.last() else {
+                val a = points[seg - 1]; val b = points[seg]
+                val span = (cumulative[seg] - cumulative[seg - 1]).coerceAtLeast(0.001f)
+                val t = (target - cumulative[seg - 1]) / span
+                Offset(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+            }
+        }
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = strokes[index].copy(points = result) }
+        }
     }
 
     fun finishShapeEditing() {
@@ -1099,6 +1160,15 @@ fun MotionCanvasApp() {
                         }
                     }
 
+                    if (nodeEditorMode && editStrokeIndex != null) {
+                        val idx = editStrokeIndex!!
+                        val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(idx)?.points.orEmpty()
+                        nodes.forEachIndexed { n, p ->
+                            drawCircle(if (n == editNodeIndex) Color.Yellow else Color.Cyan, radius = 11f, center = p)
+                            drawCircle(Color.DarkGray, radius = 4f, center = p)
+                        }
+                    }
+
                     currentStrokes.forEachIndexed { index, strokes ->
                         if (layers.getOrNull(index)?.visible == true) {
                             strokes.forEachIndexed { strokeIndex, s ->
@@ -1148,6 +1218,12 @@ fun MotionCanvasApp() {
                             Text(if (weightPaintMode) "Weight Pose" else editShapeLabel)
                         }
                         if (weightPaintMode) Text("Drag joints to pose", modifier = Modifier.padding(top = 12.dp))
+                        if (!weightPaintMode && !sculptMode) {
+                            Button(onClick = { nodeEditorMode = !nodeEditorMode }) { Text(if (nodeEditorMode) "Nodes On" else "Nodes") }
+                            Button(onClick = { addEditNode() }, enabled = nodeEditorMode) { Text("Add") }
+                            Button(onClick = { deleteEditNode() }, enabled = nodeEditorMode && editNodeIndex >= 0) { Text("Delete") }
+                            Button(onClick = { respaceEditNodes() }, enabled = nodeEditorMode) { Text("Re-space") }
+                        }
                     }
                 }
                 }
