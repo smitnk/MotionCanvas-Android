@@ -1250,7 +1250,24 @@ fun MotionCanvasApp() {
                         )
                     }
                 ) {
+                    // Always render a visible workspace and artboard before transformed content.
+                    drawRect(Color(0xFFE6E6E6))
                     val baseScale = artScale()
+                    val boardWidth = rasterWidth * baseScale
+                    val boardHeight = rasterHeight * baseScale
+                    val boardLeft = (size.width - boardWidth) / 2f + pan.x
+                    val boardTop = (size.height - boardHeight) / 2f + pan.y
+                    drawRect(
+                        Color.White,
+                        topLeft = Offset(boardLeft, boardTop),
+                        size = androidx.compose.ui.geometry.Size(boardWidth, boardHeight)
+                    )
+                    drawRect(
+                        Color.DarkGray,
+                        topLeft = Offset(boardLeft, boardTop),
+                        size = androidx.compose.ui.geometry.Size(boardWidth, boardHeight),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+                    )
                     translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y) {
                         rotate(degrees = rotation) {
                             scale(scaleX = baseScale * canvasScale, scaleY = baseScale * canvasScale, pivot = Offset.Zero) {
