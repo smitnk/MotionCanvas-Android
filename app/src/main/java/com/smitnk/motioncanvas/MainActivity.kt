@@ -125,8 +125,12 @@ fun MotionCanvasApp() {
     var shapeFilled by remember { mutableStateOf(false) }
     var symmetry by remember { mutableStateOf(false) }
     var symmetryAxis by remember { mutableFloatStateOf(0.5f) }
-    var undo by remember { mutableStateOf(emptyList<List<List<Stroke>>>()) }
-    var redo by remember { mutableStateOf(emptyList<List<List<Stroke>>>()) }
+    data class EditorSnapshot(
+        val strokes: List<List<Stroke>>,
+        val rasters: List<Bitmap>
+    )
+    var undo by remember { mutableStateOf(emptyList<EditorSnapshot>()) }
+    var redo by remember { mutableStateOf(emptyList<EditorSnapshot>()) }
     var scale by remember { mutableFloatStateOf(1f) }
     var rotation by remember { mutableFloatStateOf(0f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -167,11 +171,67 @@ fun MotionCanvasApp() {
     }
 
     fun snapshot() {
-        undo = (undo + currentStrokes).takeLast(40)
+        undo = (undo + EditorSnapshot(currentStrokes, rasterLayers.map { copyBitmap(it) })).takeLast(20)
         redo = emptyList()
     }
 
+    fun restoreSnapshot(snapshot: EditorSnapshot) {
+        currentStrokes = snapshot.strokes
+        rasterLayers = snapshot.rasters.map { copyBitmap(it) }
+        saveFrame()
+    }
+
+    fun floodFill(bitmap: Bitmap, startX: Int, startY: Int, color: Int, tolerance: Int = 12) {
+        if (bitmap.isRecycled || startX !in 0 until bitmap.width || startY !in 0 until bitmap.height) return
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val startIndex = startY * bitmap.width + startX
+        val target = pixels[startIndex]
+        if (target == color) return
+        fun near(a: Int, b: Int): Boolean {
+            val ar = (a ushr 16) and 255; val ag = (a ushr 8) and 255; val ab = a and 255; val aa = a ushr 24
+            val br = (b ushr 16) and 255; val bg = (b ushr 8) and 255; val bb = b and 255; val ba = b ushr 24
+            return kotlin.math.abs(ar - br) <= tolerance && kotlin.math.abs(ag - bg) <= tolerance &&
+                kotlin.math.abs(ab - bb) <= tolerance && kotlin.math.abs(aa - ba) <= tolerance
+        }
+        if (!near(target, target)) return
+        val queueX = IntArray(bitmap.width * bitmap.height)
+        val queueY = IntArray(bitmap.width * bitmap.height)
+        var head = 0; var tail = 0
+        queueX[tail] = startX; queueY[tail++] = startY
+        val visited = BooleanArray(pixels.size)
+        visited[startIndex] = true
+        while (head < tail) {
+            val x = queueX[head]; val y = queueY[head++]
+            pixels[y * bitmap.width + x] = color
+            val neighbors = intArrayOf(x - 1, y, x + 1, y, x, y - 1, x, y + 1)
+            var i = 0
+            while (i < neighbors.size) {
+                val nx = neighbors[i]; val ny = neighbors[i + 1]; i += 2
+                if (nx in 0 until bitmap.width && ny in 0 until bitmap.height) {
+                    val idx = ny * bitmap.width + nx
+                    if (!visited[idx] && near(pixels[idx], target)) {
+                        visited[idx] = true
+                        queueX[tail] = nx; queueY[tail++] = ny
+                    }
+                }
+            }
+        }
+        bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    }
+
     fun commitStroke() {
+        if (tool == Tool.FILL && current.isNotEmpty()) {
+            snapshot()
+            val p = current.last()
+            val bitmap = rasterLayers[selectedLayer]
+            floodFill(bitmap, p.x.toInt().coerceIn(0, rasterWidth - 1), p.y.toInt().coerceIn(0, rasterHeight - 1), brush.toArgb())
+            rasterLayers = rasterLayers.toMutableList().also { it[selectedLayer] = bitmap }
+            saveRasterFrame()
+            current = emptyList()
+            currentPressures = emptyList()
+            return
+        }
         if (current.size > 1) {
             snapshot()
             val stabilized = if (stabilization <= 0f) current else {
@@ -381,16 +441,16 @@ fun MotionCanvasApp() {
             title = { Text("MotionCanvas") },
             actions = {
                 TextButton(enabled = undo.isNotEmpty(), onClick = {
-                    redo = redo + currentStrokes
-                    currentStrokes = undo.last()
+                    val previous = undo.last()
+                    redo = (redo + EditorSnapshot(currentStrokes, rasterLayers.map { copyBitmap(it) })).takeLast(20)
                     undo = undo.dropLast(1)
-                    saveFrame()
+                    restoreSnapshot(previous)
                 }) { Text("Undo") }
                 TextButton(enabled = redo.isNotEmpty(), onClick = {
-                    undo = undo + currentStrokes
-                    currentStrokes = redo.last()
+                    val next = redo.last()
+                    undo = (undo + EditorSnapshot(currentStrokes, rasterLayers.map { copyBitmap(it) })).takeLast(20)
                     redo = redo.dropLast(1)
-                    saveFrame()
+                    restoreSnapshot(next)
                 }) { Text("Redo") }
             }
         )
@@ -463,7 +523,7 @@ fun MotionCanvasApp() {
                     Modifier.fillMaxSize().graphicsLayer(
                         scaleX = scale, scaleY = scale, rotationZ = rotation,
                         translationX = pan.x, translationY = pan.y
-                    ).pointerInput(tool, selectedLayer, width, opacity, brush, stabilization) {
+                    ).pointerInput(tool, selectedLayer, width, opacity, brush, stabilization, pressureEnabled, spacing, taper) {
                         detectDragGestures(
                             onDragStart = { start ->
                                 current = listOf(start)
