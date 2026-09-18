@@ -138,6 +138,11 @@ fun MotionCanvasApp() {
     var editStrokeIndex by remember { mutableStateOf<Int?>(null) }
     var editNodeIndex by remember { mutableIntStateOf(-1) }
     var editShapeLabel by remember { mutableStateOf("Edit Shape") }
+    var weightPaintMode by remember { mutableStateOf(false) }
+    var weightJoint by remember { mutableIntStateOf(-1) }
+    var weightRadius by remember { mutableFloatStateOf(180f) }
+    var weightStrength by remember { mutableFloatStateOf(0.75f) }
+    var weightJoints by remember { mutableStateOf(listOf<Offset>()) }
     var spacing by remember { mutableFloatStateOf(0.18f) }
     var taper by remember { mutableFloatStateOf(0f) }
     var shapeFilled by remember { mutableStateOf(false) }
@@ -352,6 +357,40 @@ fun MotionCanvasApp() {
             editStrokeIndex = null
             editNodeIndex = -1
         }
+    }
+
+    fun ensureWeightJoints() {
+        val index = editStrokeIndex ?: return
+        val stroke = currentStrokes.getOrNull(selectedLayer)?.getOrNull(index) ?: return
+        if (stroke.points.size < 2) return
+        if (weightJoints.size != 2) weightJoints = listOf(stroke.points.first(), stroke.points.last())
+    }
+
+    fun poseWeightJoint(point: Offset) {
+        val index = editStrokeIndex ?: return
+        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
+        if (index !in strokes.indices) return
+        val stroke = strokes[index]
+        if (stroke.points.size < 2) return
+        ensureWeightJoints()
+        if (weightJoint !in 0..1 || weightJoints.size != 2) return
+        val oldJoint = weightJoints[weightJoint]
+        val delta = point - oldJoint
+        val last = stroke.points.lastIndex.coerceAtLeast(1)
+        val updated = stroke.points.mapIndexed { i, p ->
+            val t = i.toFloat() / last.toFloat()
+            val baseWeight = if (weightJoint == 0) 1f - t else t
+            val dx = p.x - oldJoint.x
+            val dy = p.y - oldJoint.y
+            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+            val falloff = (1f - dist / weightRadius).coerceIn(0f, 1f)
+            val w = (baseWeight * falloff * weightStrength).coerceIn(0f, 1f)
+            Offset(p.x + delta.x * w, p.y + delta.y * w)
+        }
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = stroke.copy(points = updated) }
+        }
+        weightJoints = weightJoints.toMutableList().also { it[weightJoint] = point }
     }
 
     fun commitStroke() {
@@ -666,6 +705,22 @@ fun MotionCanvasApp() {
             FilterChip(deepBrushEngine, { deepBrushEngine = !deepBrushEngine }, label = { Text("Deep Brush") })
             FilterChip(quickShape, { quickShape = !quickShape }, label = { Text("Quick Shape") })
         }
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(weightPaintMode, { weightPaintMode = !weightPaintMode; if (weightPaintMode) ensureWeightJoints() }, label = { Text("Weight Paint") })
+            if (weightPaintMode) Text("Pose selected stroke", modifier = Modifier.padding(top = 10.dp))
+        }
+        if (weightPaintMode) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Weight Radius", Modifier.width(95.dp))
+                Slider(weightRadius, { weightRadius = it }, valueRange = 40f..420f)
+                Text(weightRadius.toInt().toString())
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Strength", Modifier.width(75.dp))
+                Slider(weightStrength, { weightStrength = it }, valueRange = 0.1f..1f)
+                Text((weightStrength * 100).toInt().toString() + "%")
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Spacing", Modifier.width(75.dp))
             Slider(spacing, { spacing = it }, valueRange = 0.05f..0.6f)
@@ -706,8 +761,18 @@ fun MotionCanvasApp() {
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
                                 if (editStrokeIndex != null) {
-                                    editNodeIndex = nearestEditNode(artStart)
-                                    if (editNodeIndex >= 0) snapshot()
+                                    ensureWeightJoints()
+                                    if (weightPaintMode) {
+                                        weightJoint = weightJoints.indices.minByOrNull { i ->
+                                            val dx = weightJoints[i].x - artStart.x
+                                            val dy = weightJoints[i].y - artStart.y
+                                            dx * dx + dy * dy
+                                        } ?: -1
+                                        if (weightJoint >= 0) snapshot()
+                                    } else {
+                                        editNodeIndex = nearestEditNode(artStart)
+                                        if (editNodeIndex >= 0) snapshot()
+                                    }
                                 } else {
                                     current = listOf(artStart)
                                     if (tool == Tool.SELECT) selection = listOf(artStart)
@@ -715,7 +780,9 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (editStrokeIndex != null && editNodeIndex >= 0) {
+                                if (editStrokeIndex != null && weightPaintMode && weightJoint >= 0) {
+                                    poseWeightJoint(artPoint)
+                                } else if (editStrokeIndex != null && editNodeIndex >= 0) {
                                     val strokeIndex = editStrokeIndex!!
                                     val strokes = currentStrokes[selectedLayer]
                                     if (strokeIndex in strokes.indices) {
@@ -735,6 +802,7 @@ fun MotionCanvasApp() {
                                 if (editStrokeIndex != null) {
                                     saveFrame()
                                     editNodeIndex = -1
+                                    weightJoint = -1
                                 } else if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
                             },
                             onDragCancel = {
@@ -759,6 +827,14 @@ fun MotionCanvasApp() {
                     rasterLayers.forEachIndexed { index, bitmap ->
                         if (layers.getOrNull(index)?.visible == true) {
                             drawImage(bitmap.asImageBitmap())
+                        }
+                    }
+
+                    if (weightPaintMode && editStrokeIndex != null) {
+                        ensureWeightJoints()
+                        weightJoints.forEachIndexed { i, joint ->
+                            drawCircle(if (i == weightJoint) Color.Yellow else Color.Cyan, radius = 14f, center = joint)
+                            drawCircle(Color.DarkGray, radius = 5f, center = joint)
                         }
                     }
 
@@ -803,10 +879,15 @@ fun MotionCanvasApp() {
                     }
                 }
                 if (editStrokeIndex != null) {
-                    Button(
-                        onClick = { finishShapeEditing() },
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
-                    ) { Text(editShapeLabel) }
+                    Row(
+                        Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Button(onClick = { weightPaintMode = !weightPaintMode; if (weightPaintMode) ensureWeightJoints() }) {
+                            Text(if (weightPaintMode) "Weight Pose" else editShapeLabel)
+                        }
+                        if (weightPaintMode) Text("Drag joints to pose", modifier = Modifier.padding(top = 12.dp))
+                    }
                 }
                 }
             }
