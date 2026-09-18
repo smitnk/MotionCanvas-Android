@@ -24,7 +24,8 @@ fun TransformSelectionOverlay(
     handleRadius: Float = 12f,
     onTransformStart: (TransformInteraction) -> Unit = {},
     onTransformChange: (TransformBox) -> Unit = {},
-    onTransformEnd: (TransformBox) -> Unit = {}
+    onTransformEnd: (TransformBox) -> Unit = {},
+    onPivotChange: (Offset) -> Unit = {}
 ) {
     if (!enabled || box == null) return
 
@@ -43,6 +44,14 @@ fun TransformSelectionOverlay(
                 onDrag = { change, _ ->
                     val active = interaction ?: return@detectDragGestures
                     change.consume()
+                    if (active.handle == TransformHandle.PIVOT) {
+                        val clamped = Offset(
+                            change.position.x.coerceIn(box.left, box.right),
+                            change.position.y.coerceIn(box.top, box.bottom)
+                        )
+                        onPivotChange(clamped)
+                        return@detectDragGestures
+                    }
                     val updated = TransformInteractionController.move(active, change.position)
                         ?: return@detectDragGestures
                     onTransformChange(updated)
