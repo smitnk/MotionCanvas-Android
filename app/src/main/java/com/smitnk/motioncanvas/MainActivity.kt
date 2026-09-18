@@ -130,6 +130,10 @@ fun MotionCanvasApp() {
     var currentPressures by remember { mutableStateOf(emptyList<Float>()) }
     var selection by remember { mutableStateOf(emptyList<Offset>()) }
     var selectedStrokeIds by remember { mutableStateOf(emptySet<Int>()) }
+    var selectedTransformBox by remember { mutableStateOf<TransformBox?>(null) }
+    var activeTransformInteraction by remember { mutableStateOf<TransformInteraction?>(null) }
+    var transformDragStart by remember { mutableStateOf<Offset?>(null) }
+    var transformSourceBox by remember { mutableStateOf<TransformBox?>(null) }
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
     var showColorPicker by remember { mutableStateOf(false) }
@@ -730,10 +734,29 @@ fun MotionCanvasApp() {
     }
 
     fun selectFromLasso() {
-        val hits = currentStrokes.getOrNull(selectedLayer).orEmpty().mapIndexedNotNull { index, stroke ->
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val hits = strokes.mapIndexedNotNull { index, stroke ->
             if (stroke.points.any { pointInPolygon(it, selection) }) index else null
         }.toSet()
         selectedStrokeIds = hits
+        selectedTransformBox = SelectionGeometry.strokeBounds(hits.mapNotNull { strokes.getOrNull(it) })?.toTransformBox()
+    }
+
+    fun selectAt(point: Offset) {
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val result = StrokeSelectionEngine.select(strokes, point, tolerance = 32f)
+        selectedStrokeIds = result.indices
+        selectedTransformBox = result.transformBox
+        selection = emptyList()
+    }
+
+    fun applySelectedTransform(from: TransformBox, to: TransformBox) {
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        if (selectedStrokeIds.isEmpty()) return
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = StrokeSelectionEngine.applyTransform(strokes, StrokeSelection(selectedStrokeIds, from), from, to)
+        }
+        selectedTransformBox = to
     }
 
     fun addFrame() {
@@ -1154,6 +1177,18 @@ fun MotionCanvasApp() {
                                     perspectiveHorizonHandle = perspectiveHandle < 0 && perspectiveGuide.isNearHorizon(artStart)
                                     if (perspectiveHandle >= 0 || perspectiveHorizonHandle) return@detectDragGestures
                                 }
+                                if (tool == Tool.SELECT && selectedStrokeIds.isNotEmpty() && selectedTransformBox != null) {
+                                    val artBox = selectedTransformBox!!
+                                    val hit = TransformHandleGeometry.hitTest(artBox, artStart, 36f)
+                                    val inside = artBox.contains(artStart, 24f)
+                                    if (hit.handle != TransformHandle.NONE || inside) {
+                                        snapshot()
+                                        activeTransformInteraction = if (hit.handle != TransformHandle.NONE) TransformInteractionController.begin(artBox, artStart) else null
+                                        transformDragStart = artStart
+                                        transformSourceBox = artBox
+                                        return@detectDragGestures
+                                    }
+                                }
                                 if (editStrokeIndex != null) {
  else if (nodeEditorMode && bezierHandleMode) {
                                         val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)?.points.orEmpty()
@@ -1221,8 +1256,15 @@ fun MotionCanvasApp() {
                                         }
                                     }
                                 } else {
-                                    current = current + artPoint
-                                    if (tool == Tool.SELECT) selection = selection + artPoint
+                                    if (tool == Tool.SELECT && selectedStrokeIds.isNotEmpty() && transformSourceBox != null && transformDragStart != null) {
+                                        val source = transformSourceBox!!
+                                        val updated = activeTransformInteraction?.let { TransformInteractionController.move(it, artPoint) }
+                                            ?: source.copy(center = source.center + (artPoint - transformDragStart!!))
+                                        if (updated != null) applySelectedTransform(source, updated)
+                                    } else {
+                                        current = current + artPoint
+                                        if (tool == Tool.SELECT) selection = selection + artPoint
+                                    }
                                 }
                             },
                             onDragEnd = {
@@ -1235,7 +1277,15 @@ fun MotionCanvasApp() {
                                     editNodeIndex = -1
                                     weightJoint = -1
                                     sculptSnapshotTaken = false
-                                } else if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
+                                } else if (tool == Tool.SELECT) {
+                                    if (transformSourceBox != null) {
+                                        saveFrame()
+                                        transformSourceBox = null
+                                        transformDragStart = null
+                                        activeTransformInteraction = null
+                                    } else if (selection.size <= 1) selectAt(selection.firstOrNull() ?: Offset.Zero)
+                                    else selectFromLasso()
+                                } else commitStroke()
                             },
                             onDragCancel = {
                                 perspectiveHandle = -1
@@ -1325,6 +1375,16 @@ fun MotionCanvasApp() {
                                     drawStroke(this, s, Color.Blue.copy(alpha = 0.35f), outline = true)
                                 }
                             }
+                        }
+                    }
+
+                    if (tool == Tool.SELECT && selectedTransformBox != null && selectedStrokeIds.isNotEmpty()) {
+                        val box = selectedTransformBox!!
+                        val corners = box.corners()
+                        corners.indices.forEach { i -> drawLine(Color.Blue, corners[i], corners[(i + 1) % corners.size], 2.5f) }
+                        TransformHandleGeometry.handles(box).forEach { (handle, point) ->
+                            drawCircle(if (handle == TransformHandle.ROTATE) Color.Black else Color.White, 11f, point)
+                            drawCircle(Color.Blue, 11f, point, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
                         }
                     }
 
