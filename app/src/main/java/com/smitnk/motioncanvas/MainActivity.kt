@@ -136,6 +136,7 @@ fun MotionCanvasApp() {
     var transformSourceBox by remember { mutableStateOf<TransformBox?>(null) }
     var lockTransformAspect by remember { mutableStateOf(false) }
     var snapTransformRotation by remember { mutableStateOf(false) }
+    var additiveSelect by remember { mutableStateOf(false) }
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
     var showColorPicker by remember { mutableStateOf(false) }
@@ -746,7 +747,11 @@ fun MotionCanvasApp() {
 
     fun selectAt(point: Offset) {
         val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
-        val result = StrokeSelectionEngine.select(strokes, point, tolerance = 32f)
+        val result = if (additiveSelect) {
+            StrokeSelectionEngine.toggleSelection(strokes, point, tolerance = 32f, current = selectedStrokeIds)
+        } else {
+            StrokeSelectionEngine.select(strokes, point, tolerance = 32f)
+        }
         selectedStrokeIds = result.indices
         selectedTransformBox = result.transformBox
         selection = emptyList()
@@ -1482,6 +1487,7 @@ fun MotionCanvasApp() {
             Button(onClick = { transformSelection(1f, 15f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("↷") }
             Button(onClick = { lockTransformAspect = !lockTransformAspect }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (lockTransformAspect) "Ratio On" else "Ratio Off") }
             Button(onClick = { snapTransformRotation = !snapTransformRotation }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (snapTransformRotation) "Snap On" else "Snap Off") }
+            Button(onClick = { additiveSelect = !additiveSelect }) { Text(if (additiveSelect) "Multi On" else "Multi Off") }
             Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList(); selectedTransformBox = null }) { Text("Clear") }
         }
 
