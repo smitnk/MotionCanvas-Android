@@ -1238,12 +1238,10 @@ fun MotionCanvasApp() {
                     }
                 ) {
                     val baseScale = artScale()
-                    withTransform(transformBlock = {
-                        translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y)
-                        rotate(degrees = rotation)
-                        scale(scaleX = baseScale * canvasScale, scaleY = baseScale * canvasScale, pivot = Offset.Zero)
-                        translate(left = -rasterWidth / 2f, top = -rasterHeight / 2f)
-                    }) {
+                    translate(left = canvasSize.width / 2f + pan.x, top = canvasSize.height / 2f + pan.y) {
+                        rotate(degrees = rotation) {
+                            scale(scaleX = baseScale * canvasScale, scaleY = baseScale * canvasScale, pivot = Offset.Zero) {
+                                translate(left = -rasterWidth / 2f, top = -rasterHeight / 2f) {
                     if (showGrid) {
                         val step = gridSpacing.coerceAtLeast(20f)
                         if (gridType == "2D") {
@@ -1352,7 +1350,9 @@ fun MotionCanvasApp() {
                                 closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE),
                             color = if (tool == Tool.ERASER) Color.White else brush
                         )
-                    }
+                                }
+                            }
+                        }
                     }
                 }
                 if (editStrokeIndex != null) {
