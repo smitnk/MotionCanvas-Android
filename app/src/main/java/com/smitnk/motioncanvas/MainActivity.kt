@@ -1297,9 +1297,11 @@ fun MotionCanvasApp() {
                     }
 
                     currentStrokes.forEachIndexed { index, strokes ->
-                        if (layers.getOrNull(index)?.visible == true) {
+                        val layer = layers.getOrNull(index)
+                        if (layer?.visible == true) {
+                            val alpha = layer.opacity
                             strokes.forEachIndexed { strokeIndex, s ->
-                                drawStroke(this, s, s.color.copy(alpha = s.opacity * layers[index].opacity))
+                                drawStroke(this, s, s.color.copy(alpha = s.opacity * alpha))
                                 if (index == selectedLayer && strokeIndex in selectedStrokeIds) {
                                     drawStroke(this, s, Color.Blue.copy(alpha = 0.35f), outline = true)
                                 }
