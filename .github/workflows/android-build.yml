@@ -37,10 +37,22 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+      - name: Build debug APK with detailed compiler diagnostics
+        run: |
+          gradle --no-daemon :app:assembleDebug --stacktrace --info 2>&1 | tee build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: motioncanvas-build-diagnostics
+          path: build.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: motioncanvas-debug-apk
