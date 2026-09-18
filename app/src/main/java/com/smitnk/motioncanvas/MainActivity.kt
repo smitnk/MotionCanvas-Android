@@ -1034,6 +1034,12 @@ fun MotionCanvasApp() {
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
         }
 
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = 300.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Size " + width.toInt(), Modifier.width(70.dp))
             Slider(width, { width = it }, valueRange = 1f..80f)
@@ -1128,9 +1134,12 @@ fun MotionCanvasApp() {
             FilterChip(pressureEnabled, { pressureEnabled = !pressureEnabled }, label = { Text("Pressure") })
         }
 
+        }
         Row(Modifier.weight(1f).fillMaxWidth()) {
             Box(
-                Modifier.weight(1f).fillMaxHeight().background(Color.White)
+                Modifier.weight(1f).fillMaxHeight()
+                    .background(Color(0xFFF1F1F1))
+                    .border(1.dp, Color.LightGray)
                     .pointerInput(Unit) {
                         detectTransformGestures { _, panChange, zoomChange, rotationChange ->
                             canvasScale = (canvasScale * zoomChange).coerceIn(0.25f, 8f)
