@@ -134,6 +134,8 @@ fun MotionCanvasApp() {
     var activeTransformInteraction by remember { mutableStateOf<TransformInteraction?>(null) }
     var transformDragStart by remember { mutableStateOf<Offset?>(null) }
     var transformSourceBox by remember { mutableStateOf<TransformBox?>(null) }
+    var transformPivotStartAngle by remember { mutableFloatStateOf(0f) }
+    var transformPivotRotation by remember { mutableFloatStateOf(0f) }
     var lockTransformAspect by remember { mutableStateOf(false) }
     var snapTransformRotation by remember { mutableStateOf(false) }
     var additiveSelect by remember { mutableStateOf(false) }
@@ -1256,6 +1258,16 @@ fun MotionCanvasApp() {
                                         snapshot()
                                         activeTransformInteraction = if (hit.handle != TransformHandle.NONE) TransformInteractionController.begin(artBox, artStart) else null
                                         transformDragStart = artStart
+                                        if (hit.handle == TransformHandle.ROTATE) {
+                                            val pivot = artBox.pivot
+                                            transformPivotStartAngle = Math.toDegrees(
+                                                kotlin.math.atan2(
+                                                    (artStart.y - pivot.y).toDouble(),
+                                                    (artStart.x - pivot.x).toDouble()
+                                                )
+                                            ).toFloat()
+                                            transformPivotRotation = 0f
+                                        }
                                         transformSourceBox = artBox
                                         return@detectDragGestures
                                     }
@@ -1335,6 +1347,24 @@ fun MotionCanvasApp() {
                                                 artPoint.y.coerceIn(source.top, source.bottom)
                                             )
                                             selectedTransformBox = source.copy(pivot = pivot)
+                                        } else if (activeTransformInteraction?.handle == TransformHandle.ROTATE) {
+                                            val pivot = source.pivot
+                                            val angle = Math.toDegrees(
+                                                kotlin.math.atan2(
+                                                    (artPoint.y - pivot.y).toDouble(),
+                                                    (artPoint.x - pivot.x).toDouble()
+                                                )
+                                            ).toFloat()
+                                            var delta = angle - transformPivotStartAngle
+                                            if (snapTransformRotation) {
+                                                delta = (delta / 15f).roundToInt() * 15f
+                                            }
+                                            val selectionState = StrokeSelection(selectedStrokeIds, source)
+                                            currentStrokes = currentStrokes.toMutableList().also {
+                                                it[selectedLayer] = TransformActions.rotateAroundPivot(strokes = strokes, selection = selectionState, degrees = delta)
+                                            }
+                                            selectedTransformBox = source.copy(rotationDegrees = source.rotationDegrees + delta)
+                                            transformPivotRotation = delta
                                         } else {
                                             val updated = activeTransformInteraction?.let { TransformInteractionController.move(it, artPoint) }
                                                 ?: source.copy(center = source.center + (artPoint - transformDragStart!!))
