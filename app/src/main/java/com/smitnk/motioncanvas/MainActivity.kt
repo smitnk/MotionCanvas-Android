@@ -576,7 +576,15 @@ fun MotionCanvasApp() {
                 else -> p
             }
         }
-        val newWidth = if (sculptTool == "Thickness") (stroke.width + delta.x * 0.35f * sculptStrength).coerceIn(1f, 160f) else stroke.width
+        val nearestDistance = stroke.points.minOfOrNull { p ->
+            val dx = p.x - point.x
+            val dy = p.y - point.y
+            kotlin.math.sqrt(dx * dx + dy * dy)
+        } ?: sculptRadius
+        val localInfluence = (1f - nearestDistance / sculptRadius).coerceIn(0f, 1f)
+        val newWidth = if (sculptTool == "Thickness") {
+            (stroke.width + delta.x * 0.35f * sculptStrength * localInfluence).coerceIn(1f, 160f)
+        } else stroke.width
         currentStrokes = currentStrokes.toMutableList().also { it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = stroke.copy(points = updated, width = newWidth) } }
     }
 
