@@ -4,6 +4,10 @@ import android.os.Bundle
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.graphics.Bitmap.CompressFormat
+import android.net.Uri
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipInputStream
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint as AndroidPaint
@@ -26,6 +30,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -147,6 +153,53 @@ fun MotionCanvasApp() {
 
     fun copyBitmap(source: Bitmap): Bitmap = source.copy(Bitmap.Config.ARGB_8888, true)
 
+    fun projectJson(): String {
+        fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
+        val layerJson = layers.joinToString(",") { "{\"name\":\"" + esc(it.name) + "\",\"visible\":" + it.visible + ",\"opacity\":" + it.opacity + "}" }
+        val frameJson = frameData.joinToString(",") { frame ->
+            val ls = frame.layers.joinToString(",") { lf ->
+                val ss = lf.strokes.joinToString(",") { s ->
+                    val pts = s.points.joinToString(",") { "[" + it.x + "," + it.y + "]" }
+                    "{\"color\":" + s.color.toArgb() + ",\"width\":" + s.width + ",\"opacity\":" + s.opacity + ",\"closed\":" + s.closed + ",\"filled\":" + s.filled + ",\"points\":[" + pts + "]}"
+                }
+                "{\"hold\":" + lf.hold + ",\"strokes\":[" + ss + "]}"}
+            "{" + "\"layers\":[" + ls + "]}"
+        }
+        return "{\"version\":1,\"width\":" + rasterWidth + ",\"height\":" + rasterHeight + ",\"layers\":[" + layerJson + "],\"frames\":[" + frameJson + "]}"
+    }
+
+    fun saveProject(uri: Uri) {
+        try {
+            context.contentResolver.openOutputStream(uri)?.use { output -> ZipOutputStream(output).use { zip ->
+                zip.putNextEntry(ZipEntry("project.json")); zip.write(projectJson().toByteArray(Charsets.UTF_8)); zip.closeEntry()
+                rasterFrames.forEachIndexed { fi, frame -> frame.forEachIndexed { li, bitmap ->
+                    zip.putNextEntry(ZipEntry("frames/f" + fi + "_l" + li + ".png")); bitmap.compress(CompressFormat.PNG, 100, zip); zip.closeEntry()
+                }}
+            }}
+            exportStatus = "Project saved"
+        } catch (e: Exception) { exportStatus = "Save failed" }
+    }
+
+    fun loadProject(uri: Uri) {
+        try {
+            val temp = mutableMapOf<String, ByteArray>()
+            context.contentResolver.openInputStream(uri)?.use { input -> ZipInputStream(input).use { zip ->
+                while (true) { val entry = zip.nextEntry ?: break; if (!entry.isDirectory) temp[entry.name] = zip.readBytes() }
+            }}
+            val json = temp["project.json"] ?: error("Missing project")
+            val textJson = json.toString(Charsets.UTF_8)
+            val count = Regex("\\{\"layers\"").findAll(textJson).count().coerceAtLeast(1)
+            val loaded = ArrayList<List<Bitmap>>()
+            for (fi in 0 until count) {
+                loaded.add(layers.indices.map { li ->
+                    val bytes = temp["frames/f" + fi + "_l" + li + ".png"]
+                    if (bytes != null) android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size).copy(Bitmap.Config.ARGB_8888, true)
+                    else Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+                })
+            }
+            rasterFrames = loaded; frameData = List(count) { Frame(layers.map { LayerFrame() }) }; loadFrame(0); exportStatus = "Project loaded"
+        } catch (e: Exception) { exportStatus = "Load failed" }
+    }
     fun exportCurrentPng() {
         val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
         val canvas = AndroidCanvas(merged)
@@ -461,6 +514,9 @@ fun MotionCanvasApp() {
         }
     }
 
+    val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri -> if (uri != null) saveProject(uri) }
+    val loadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) loadProject(uri) }
+
     val colors = listOf(
         Color.Black, Color.White, Color.Red, Color(0xFFFF9800), Color.Yellow,
         Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color(0xFF795548)
@@ -470,6 +526,8 @@ fun MotionCanvasApp() {
         TopAppBar(
             title = { Text("MotionCanvas") },
             actions = {
+                TextButton(onClick = { saveLauncher.launch("MotionCanvas_Project.motioncanvas") }) { Text("Save Project") }
+                TextButton(onClick = { loadLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }) { Text("Load Project") }
                 TextButton(onClick = { exportCurrentPng() }) { Text("Export PNG") }
                 TextButton(enabled = undo.isNotEmpty(), onClick = {
                     val previous = undo.last()
