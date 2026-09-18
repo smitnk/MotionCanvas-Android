@@ -130,6 +130,13 @@ fun MotionCanvasApp() {
     var currentPressures by remember { mutableStateOf(emptyList<Float>()) }
     var selection by remember { mutableStateOf(emptyList<Offset>()) }
     var selectedStrokeIds by remember { mutableStateOf(emptySet<Int>()) }
+    var selectedTransformBox by remember { mutableStateOf<TransformBox?>(null) }
+    var activeTransformInteraction by remember { mutableStateOf<TransformInteraction?>(null) }
+    var transformDragStart by remember { mutableStateOf<Offset?>(null) }
+    var transformSourceBox by remember { mutableStateOf<TransformBox?>(null) }
+    var lockTransformAspect by remember { mutableStateOf(false) }
+    var snapTransformRotation by remember { mutableStateOf(false) }
+    var additiveSelect by remember { mutableStateOf(false) }
     var tool by remember { mutableStateOf(Tool.BRUSH) }
     var brush by remember { mutableStateOf(Color.Black) }
     var showColorPicker by remember { mutableStateOf(false) }
@@ -159,10 +166,7 @@ fun MotionCanvasApp() {
     var weightRadius by remember { mutableFloatStateOf(180f) }
     var weightStrength by remember { mutableFloatStateOf(0.75f) }
     var weightJoints by remember { mutableStateOf(listOf<Offset>()) }
-    var rigJoints by remember { mutableStateOf(listOf<Offset>()) }
-    var rigParents by remember { mutableStateOf(listOf<Int>()) }
-    var rigMode by remember { mutableStateOf(false) }
-    var rigSelected by remember { mutableIntStateOf(-1) }
+
     var sculptMode by remember { mutableStateOf(false) }
     var sculptTool by remember { mutableStateOf("Grab") }
     var sculptRadius by remember { mutableFloatStateOf(140f) }
@@ -181,8 +185,13 @@ fun MotionCanvasApp() {
     var gridType by remember { mutableStateOf("2D") }
     var gridSpacing by remember { mutableFloatStateOf(100f) }
     var perspectivePoints by remember { mutableIntStateOf(1) }
+    var perspectiveGuide by remember { mutableStateOf(PerspectiveGuideModel().withPointCount(1, rasterWidth.toFloat(), rasterHeight.toFloat())) }
+    var perspectiveHandle by remember { mutableIntStateOf(-1) }
+    var perspectiveHorizonHandle by remember { mutableStateOf(false) }
     var pingPong by remember { mutableStateOf(false) }
     var playDirection by remember { mutableIntStateOf(1) }
+    var timelineLoopMode by remember { mutableStateOf(TimelineLoopMode.LOOP) }
+    var playbackSpeed by remember { mutableFloatStateOf(1f) }
     data class EditorSnapshot(
         val strokes: List<List<Stroke>>,
         val rasters: List<Bitmap>
@@ -489,37 +498,11 @@ fun MotionCanvasApp() {
         }
     }
 
-    fun addRigJoint(point: Offset) {
-        rigJoints = rigJoints + point
-        rigParents = rigParents + if (rigJoints.isEmpty()) -1 else rigSelected
-        rigSelected = rigJoints.lastIndex
-    }
 
-    fun moveRigJoint(index: Int, point: Offset) {
-        if (index !in rigJoints.indices) return
-        val delta = point - rigJoints[index]
-        rigJoints = rigJoints.toMutableList().also { it[index] = point }
-        if (delta == Offset.Zero) return
-        val strokeIndex = editStrokeIndex ?: return
-        val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
-        if (strokeIndex !in strokes.indices) return
-        val stroke = strokes[strokeIndex]
-        val moved = stroke.points.map { p ->
-            val d = p - point
-            val dist = kotlin.math.sqrt(d.x * d.x + d.y * d.y)
-            val influence = (1f - dist / weightRadius).coerceIn(0f, 1f) * weightStrength
-            p + delta * influence
-        }
-        currentStrokes = currentStrokes.toMutableList().also { layersList ->
-            layersList[selectedLayer] = strokes.toMutableList().also { it[strokeIndex] = stroke.copy(points = moved) }
-        }
-    }
 
-    fun resetRig() {
-        rigJoints = emptyList()
-        rigParents = emptyList()
-        rigSelected = -1
-    }
+
+
+
 
     fun ensureWeightJoints() {
         val index = editStrokeIndex ?: return
@@ -754,10 +737,69 @@ fun MotionCanvasApp() {
     }
 
     fun selectFromLasso() {
-        val hits = currentStrokes.getOrNull(selectedLayer).orEmpty().mapIndexedNotNull { index, stroke ->
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val hits = strokes.mapIndexedNotNull { index, stroke ->
             if (stroke.points.any { pointInPolygon(it, selection) }) index else null
         }.toSet()
         selectedStrokeIds = hits
+        selectedTransformBox = SelectionGeometry.strokeBounds(hits.mapNotNull { strokes.getOrNull(it) })?.toTransformBox()
+    }
+
+    fun selectAt(point: Offset) {
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val result = if (additiveSelect) {
+            StrokeSelectionEngine.toggleSelection(strokes, point, tolerance = 32f, current = selectedStrokeIds)
+        } else {
+            StrokeSelectionEngine.select(strokes, point, tolerance = 32f)
+        }
+        selectedStrokeIds = result.indices
+        selectedTransformBox = result.transformBox
+        selection = emptyList()
+    }
+
+    fun applySelectedTransform(from: TransformBox, to: TransformBox) {
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        if (selectedStrokeIds.isEmpty()) return
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = StrokeSelectionEngine.applyTransform(strokes, StrokeSelection(selectedStrokeIds, from), from, to)
+        }
+        selectedTransformBox = to
+    }
+
+    fun duplicateSelectedStrokes() {
+        if (selectedStrokeIds.isEmpty()) return
+        snapshot()
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        val duplicates = selectedStrokeIds.sorted().mapNotNull { strokes.getOrNull(it) }.map { stroke ->
+            stroke.copy(
+                points = stroke.points.map { it + Offset(24f, 24f) },
+                inHandles = stroke.inHandles.toList(),
+                outHandles = stroke.outHandles.toList(),
+                pressures = stroke.pressures.toList()
+            )
+        }
+        if (duplicates.isEmpty()) return
+        val start = strokes.size
+        currentStrokes = currentStrokes.toMutableList().also { layers ->
+            layers[selectedLayer] = strokes + duplicates
+        }
+        selectedStrokeIds = (start until start + duplicates.size).toSet()
+        selectedTransformBox = SelectionGeometry.strokeBounds(duplicates)?.toTransformBox()
+        selection = emptyList()
+        saveFrame()
+    }
+
+    fun deleteSelectedStrokes() {
+        if (selectedStrokeIds.isEmpty()) return
+        snapshot()
+        val strokes = currentStrokes.getOrNull(selectedLayer).orEmpty()
+        currentStrokes = currentStrokes.toMutableList().also { layers ->
+            layers[selectedLayer] = strokes.filterIndexed { index, _ -> index !in selectedStrokeIds }
+        }
+        selectedStrokeIds = emptySet()
+        selectedTransformBox = null
+        selection = emptyList()
+        saveFrame()
     }
 
     fun addFrame() {
@@ -816,36 +858,45 @@ fun MotionCanvasApp() {
         layers = layers.toMutableList().also { it[index] = it[index].copy(visible = !it[index].visible) }
     }
 
-    LaunchedEffect(playing, fps, frameData.size, pingPong) {
-        while (playing) {
-            delay(1000L / fps)
-            val next = frameIndex + playDirection
-            if (next >= frameData.size || next < 0) {
-                if (pingPong && frameData.size > 1) {
-                    playDirection = -playDirection
-                    loadFrame((frameIndex + playDirection).coerceIn(0, frameData.lastIndex))
-                } else {
-                    playDirection = 1
-                    loadFrame(0)
-                }
-            } else loadFrame(next)
+    LaunchedEffect(playing, fps, frameData.size, pingPong, timelineLoopMode, playbackSpeed, frameIndex) {
+        while (playing && frameData.isNotEmpty()) {
+            val mode = if (pingPong) TimelineLoopMode.PING_PONG else timelineLoopMode
+            val state = TimelineState(
+                frame = frameIndex,
+                playing = true,
+                direction = playDirection,
+                fps = fps,
+                speed = playbackSpeed,
+                loopMode = mode
+            )
+            val hold = frameData.getOrNull(frameIndex)?.layers?.firstOrNull()?.hold?.coerceAtLeast(1) ?: 1
+            delay(state.frameDelayMillis() * hold)
+            val nextState = state.nextFrame(frameData.size)
+            playDirection = nextState.direction
+            if (!nextState.playing) playing = false
+            loadFrame(nextState.frame.coerceIn(0, frameData.lastIndex))
         }
     }
 
     fun renderFrameBitmap(index: Int): Bitmap {
         val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
-        val canvas = AndroidCanvas(merged)
-        canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        rasterFrames.getOrNull(index)?.forEachIndexed { i, bitmap ->
-            if (layers.getOrNull(i)?.visible == true) {
+        val mergedCanvas = AndroidCanvas(merged)
+        mergedCanvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+
+        val frame = frameData.getOrNull(index)
+        val rasterFrame = rasterFrames.getOrNull(index)
+
+        fun renderLayerBitmap(layerIndex: Int): Bitmap {
+            val layerBitmap = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+            val layerCanvas = AndroidCanvas(layerBitmap)
+            layerCanvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
+
+            rasterFrame?.getOrNull(layerIndex)?.let { bitmap ->
                 val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-                paint.alpha = (layers[i].opacity.coerceIn(0f, 1f) * 255f).toInt()
-                canvas.drawBitmap(bitmap, 0f, 0f, paint)
+                layerCanvas.drawBitmap(bitmap, 0f, 0f, paint)
             }
-        }
-        frameData.getOrNull(index)?.layers?.forEachIndexed { i, layer ->
-            if (layers.getOrNull(i)?.visible != true) return@forEachIndexed
-            layer.strokes.forEach { stroke ->
+
+            frame?.layers?.getOrNull(layerIndex)?.strokes?.forEach { stroke ->
                 if (stroke.points.isEmpty()) return@forEach
                 val path = android.graphics.Path().apply {
                     moveTo(stroke.points.first().x, stroke.points.first().y)
@@ -853,16 +904,47 @@ fun MotionCanvasApp() {
                     if (stroke.closed) close()
                 }
                 val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-                paint.color = stroke.color.copy(alpha = stroke.opacity * layers[i].opacity).toArgb()
+                paint.color = stroke.color.copy(alpha = stroke.opacity).toArgb()
                 paint.style = if (stroke.filled) AndroidPaint.Style.FILL else AndroidPaint.Style.STROKE
                 paint.strokeWidth = stroke.width
                 paint.strokeCap = AndroidPaint.Cap.ROUND
-                canvas.drawPath(path, paint)
+                paint.strokeJoin = AndroidPaint.Join.ROUND
+                layerCanvas.drawPath(path, paint)
             }
+            return layerBitmap
         }
+
+        var belowBitmap: Bitmap? = null
+        layers.indices.forEach { i ->
+            if (layers.getOrNull(i)?.visible != true) return@forEach
+            val layerBitmap = renderLayerBitmap(i)
+
+            if (layers[i].clipToBelow && belowBitmap != null) {
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                val clipped = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+                val clippedCanvas = AndroidCanvas(clipped)
+                clippedCanvas.drawBitmap(layerBitmap, 0f, 0f, null)
+                clippedCanvas.drawBitmap(belowBitmap, 0f, 0f, paint)
+                paint.xfermode = null
+                mergedCanvas.drawBitmap(clipped, 0f, 0f, layerPaint(layers[i].opacity))
+                clipped.recycle()
+            } else {
+                mergedCanvas.drawBitmap(layerBitmap, 0f, 0f, layerPaint(layers[i].opacity))
+            }
+
+            belowBitmap?.recycle()
+            belowBitmap = layerBitmap
+        }
+        belowBitmap?.recycle()
         return merged
     }
 
+    fun layerPaint(opacity: Float): AndroidPaint {
+        val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+        paint.alpha = (opacity.coerceIn(0f, 1f) * 255f).toInt()
+        return paint
+    }
     fun exportGif(uri: Uri) {
         try {
             context.contentResolver.openOutputStream(uri)?.use { output ->
@@ -1043,7 +1125,9 @@ fun MotionCanvasApp() {
                 Text("Grid " + gridSpacing.toInt())
                 Slider(gridSpacing, { gridSpacing = it }, valueRange = 40f..240f, modifier = Modifier.width(130.dp))
                 if (gridType == "PERSPECTIVE") listOf(1, 2, 3).forEach { n ->
-                    FilterChip(perspectivePoints == n, { perspectivePoints = n }, label = { Text(n.toString() + "P") })
+                    FilterChip(perspectivePoints == n, { perspectivePoints = n; perspectiveGuide = perspectiveGuide.withPointCount(n, rasterWidth.toFloat(), rasterHeight.toFloat()) }, label = { Text(n.toString() + "P") })
+                    FilterChip(perspectiveGuide.snapEnabled, { perspectiveGuide = perspectiveGuide.copy(snapEnabled = !perspectiveGuide.snapEnabled) }, label = { Text("Snap") })
+                    Button(onClick = { perspectiveGuide = PerspectiveGuideModel().withPointCount(perspectivePoints, rasterWidth.toFloat(), rasterHeight.toFloat()) }) { Text("Reset VP") }
                 }
             }
         }
@@ -1131,13 +1215,25 @@ fun MotionCanvasApp() {
                         detectDragGestures(
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
+                                if (showGrid && gridType == "PERSPECTIVE") {
+                                    perspectiveHandle = perspectiveGuide.nearestPoint(artStart)
+                                    perspectiveHorizonHandle = perspectiveHandle < 0 && perspectiveGuide.isNearHorizon(artStart)
+                                    if (perspectiveHandle >= 0 || perspectiveHorizonHandle) return@detectDragGestures
+                                }
+                                if (tool == Tool.SELECT && selectedStrokeIds.isNotEmpty() && selectedTransformBox != null) {
+                                    val artBox = selectedTransformBox!!
+                                    val hit = TransformHandleGeometry.hitTest(artBox, artStart, 36f)
+                                    val inside = artBox.contains(artStart, 24f)
+                                    if (hit.handle != TransformHandle.NONE || inside) {
+                                        snapshot()
+                                        activeTransformInteraction = if (hit.handle != TransformHandle.NONE) TransformInteractionController.begin(artBox, artStart) else null
+                                        transformDragStart = artStart
+                                        transformSourceBox = artBox
+                                        return@detectDragGestures
+                                    }
+                                }
                                 if (editStrokeIndex != null) {
-                                    if (rigMode) {
-                                            var nearest = -1
-                                            var bd = 42f * 42f
-                                            rigJoints.forEachIndexed { i, p -> val d = (p - artStart).let { it.x*it.x + it.y*it.y }; if (d < bd) { bd=d; nearest=i } }
-                                            rigSelected = nearest
-                                        } else if (nodeEditorMode && bezierHandleMode) {
+ else if (nodeEditorMode && bezierHandleMode) {
                                         val nodes = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)?.points.orEmpty()
                                         var bestNode = -1
                                         var bestDist = Float.MAX_VALUE
@@ -1177,9 +1273,15 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (rigMode && rigSelected >= 0) {
-                                    moveRigJoint(rigSelected, artPoint)
-                                } else if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
+                                if (showGrid && gridType == "PERSPECTIVE" && perspectiveHandle >= 0) {
+                                    perspectiveGuide = perspectiveGuide.movePoint(perspectiveHandle, artPoint)
+                                    return@detectDragGestures
+                                }
+                                if (showGrid && gridType == "PERSPECTIVE" && perspectiveHorizonHandle) {
+                                    perspectiveGuide = perspectiveGuide.moveHorizon(artPoint.y, rasterHeight.toFloat())
+                                    return@detectDragGestures
+                                }
+ else if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
                                     updateBezierHandle(artPoint, activeHandleSide)
                                 } else if (editStrokeIndex != null && sculptMode) {
                                     sculptStroke(artPoint, change.position - change.previousPosition)
@@ -1197,20 +1299,40 @@ fun MotionCanvasApp() {
                                         }
                                     }
                                 } else {
-                                    current = current + artPoint
-                                    if (tool == Tool.SELECT) selection = selection + artPoint
+                                    if (tool == Tool.SELECT && selectedStrokeIds.isNotEmpty() && transformSourceBox != null && transformDragStart != null) {
+                                        val source = transformSourceBox!!
+                                        val updated = activeTransformInteraction?.let { TransformInteractionController.move(it, artPoint) }
+                                            ?: source.copy(center = source.center + (artPoint - transformDragStart!!))
+                                        if (updated != null) applySelectedTransform(source, updated)
+                                    } else {
+                                        current = current + artPoint
+                                        if (tool == Tool.SELECT) selection = selection + artPoint
+                                    }
                                 }
                             },
                             onDragEnd = {
-                                if (editStrokeIndex != null) {
+                                if (perspectiveHandle >= 0 || perspectiveHorizonHandle) {
+                                    perspectiveHandle = -1
+                                    perspectiveHorizonHandle = false
+                                } else if (editStrokeIndex != null) {
                                     saveFrame()
                                     activeHandle = -1
                                     editNodeIndex = -1
                                     weightJoint = -1
                                     sculptSnapshotTaken = false
-                                } else if (tool == Tool.SELECT) selectFromLasso() else commitStroke()
+                                } else if (tool == Tool.SELECT) {
+                                    if (transformSourceBox != null) {
+                                        saveFrame()
+                                        transformSourceBox = null
+                                        transformDragStart = null
+                                        activeTransformInteraction = null
+                                    } else if (selection.size <= 1) selectAt(selection.firstOrNull() ?: Offset.Zero)
+                                    else selectFromLasso()
+                                } else commitStroke()
                             },
                             onDragCancel = {
+                                perspectiveHandle = -1
+                                perspectiveHorizonHandle = false
                                 current = emptyList()
                                 selection = emptyList()
                                 editNodeIndex = -1
@@ -1236,13 +1358,12 @@ fun MotionCanvasApp() {
                             var gx2 = 0f
                             while (gx2 <= rasterWidth + rasterHeight) { drawLine(Color.Gray.copy(alpha = 0.18f), Offset(gx2, 0f), Offset(gx2 - rasterHeight, rasterHeight.toFloat()), 1f); gx2 += step }
                         } else {
-                            val center = Offset(rasterWidth / 2f, rasterHeight / 2f)
-                            val vps = when (perspectivePoints) {
-                                1 -> listOf(Offset(rasterWidth / 2f, -500f))
-                                2 -> listOf(Offset(-500f, rasterHeight / 2f), Offset(rasterWidth + 500f, rasterHeight / 2f))
-                                else -> listOf(Offset(-500f, -400f), Offset(rasterWidth + 500f, -400f), Offset(rasterWidth / 2f, rasterHeight + 1500f))
+                            val center = Offset(rasterWidth / 2f, perspectiveGuide.horizonY)
+                            drawLine(Color.Gray.copy(alpha = 0.45f), Offset(0f, perspectiveGuide.horizonY), Offset(rasterWidth.toFloat(), perspectiveGuide.horizonY), 2f)
+                            perspectiveGuide.vanishingPoints.forEachIndexed { i, vp ->
+                                drawLine(Color.Gray.copy(alpha = 0.28f), center, vp, 1.5f)
+                                drawCircle(if (i == perspectiveHandle) Color.Yellow else Color.Cyan, 18f, vp)
                             }
-                            vps.forEach { vp -> drawLine(Color.Gray.copy(alpha = 0.28f), center, vp, 1.5f) }
                         }
                     }
 
@@ -1266,14 +1387,7 @@ fun MotionCanvasApp() {
                         }
                     }
 
-                    if (rigMode && rigJoints.isNotEmpty()) {
-                        rigJoints.forEachIndexed { i, p ->
-                            val parent = rigParents.getOrNull(i) ?: -1
-                            if (parent in rigJoints.indices) drawLine(Color.Cyan, rigJoints[parent], p, 4f)
-                            drawCircle(if (i == rigSelected) Color.Yellow else Color.Cyan, 14f, p)
-                            drawCircle(Color.DarkGray, 5f, p)
-                        }
-                    }
+
 
                     if (nodeEditorMode && bezierHandleMode && editStrokeIndex != null) {
                         val s = currentStrokes.getOrNull(selectedLayer)?.getOrNull(editStrokeIndex!!)
@@ -1304,6 +1418,16 @@ fun MotionCanvasApp() {
                                     drawStroke(this, s, Color.Blue.copy(alpha = 0.35f), outline = true)
                                 }
                             }
+                        }
+                    }
+
+                    if (tool == Tool.SELECT && selectedTransformBox != null && selectedStrokeIds.isNotEmpty()) {
+                        val box = selectedTransformBox!!
+                        val corners = box.corners()
+                        corners.indices.forEach { i -> drawLine(Color.Blue, corners[i], corners[(i + 1) % corners.size], 2.5f) }
+                        TransformHandleGeometry.handles(box).forEach { (handle, point) ->
+                            drawCircle(if (handle == TransformHandle.ROTATE) Color.Black else Color.White, 11f, point)
+                            drawCircle(Color.Blue, 11f, point, style = androidx.compose.ui.graphics.drawscope.Stroke(2f))
                         }
                     }
 
@@ -1397,14 +1521,24 @@ fun MotionCanvasApp() {
             Button(onClick = { transformSelection(1.1f, 0f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("Scale +") }
             Button(onClick = { transformSelection(1f, -15f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("↶") }
             Button(onClick = { transformSelection(1f, 15f, Offset.Zero) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("↷") }
-            Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList() }) { Text("Clear") }
+            Button(onClick = { lockTransformAspect = !lockTransformAspect }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (lockTransformAspect) "Ratio On" else "Ratio Off") }
+            Button(onClick = { snapTransformRotation = !snapTransformRotation }, enabled = selectedStrokeIds.isNotEmpty()) { Text(if (snapTransformRotation) "Snap On" else "Snap Off") }
+            Button(onClick = { additiveSelect = !additiveSelect }) { Text(if (additiveSelect) "Multi On" else "Multi Off") }
+            Button(onClick = ::duplicateSelectedStrokes, enabled = selectedStrokeIds.isNotEmpty()) { Text("Duplicate") }
+            Button(onClick = ::deleteSelectedStrokes, enabled = selectedStrokeIds.isNotEmpty()) { Text("Delete") }
+            Button(onClick = { selectedStrokeIds = emptySet(); selection = emptyList(); selectedTransformBox = null }) { Text("Clear") }
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = { playing = !playing }) { Text(if (playing) "Pause" else "Play") }
-            FilterChip(pingPong, { pingPong = !pingPong }, label = { Text("Ping-Pong") })
+            FilterChip(timelineLoopMode == TimelineLoopMode.LOOP && !pingPong, { timelineLoopMode = TimelineLoopMode.LOOP; pingPong = false }, label = { Text("Loop") })
+            FilterChip(timelineLoopMode == TimelineLoopMode.ONCE, { timelineLoopMode = TimelineLoopMode.ONCE; pingPong = false }, label = { Text("Once") })
+            FilterChip(timelineLoopMode == TimelineLoopMode.PING_PONG || pingPong, { timelineLoopMode = TimelineLoopMode.PING_PONG; pingPong = true }, label = { Text("Ping-Pong") })
             Text("FPS " + fps, Modifier.padding(horizontal = 4.dp))
             listOf(8, 12, 24).forEach { rate -> Button(onClick = { fps = rate }) { Text(rate.toString()) } }
+            Button(onClick = { playbackSpeed = (playbackSpeed - 0.25f).coerceAtLeast(0.25f) }) { Text("−Speed") }
+            Text(String.format("%.2fx", playbackSpeed), Modifier.padding(horizontal = 2.dp))
+            Button(onClick = { playbackSpeed = (playbackSpeed + 0.25f).coerceAtMost(4f) }) { Text("+Speed") }
             Button(onClick = { setHold((frameData[frameIndex].layers.firstOrNull()?.hold ?: 1) + 1) }) { Text("Hold+") }
             Button(onClick = { setHold(1) }) { Text("Hold 1") }
         }
