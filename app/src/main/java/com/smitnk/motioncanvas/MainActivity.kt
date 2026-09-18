@@ -1,6 +1,11 @@
 package com.smitnk.motioncanvas
 
 import android.os.Bundle
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
+import android.graphics.Paint as AndroidPaint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
@@ -26,6 +31,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -94,6 +101,10 @@ fun MotionCanvasApp() {
     var layers by remember { mutableStateOf(listOf(ArtLayer("Layer 1"))) }
     var frameData by remember { mutableStateOf(listOf(Frame(listOf(LayerFrame())))) }
     var currentStrokes by remember { mutableStateOf(listOf(emptyList<Stroke>())) }
+    val rasterWidth = 1600
+    val rasterHeight = 1200
+    var rasterLayers by remember { mutableStateOf(listOf(Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888))) }
+    var rasterFrames by remember { mutableStateOf(listOf(listOf(Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)))) }
     var selectedLayer by remember { mutableIntStateOf(0) }
     var current by remember { mutableStateOf(emptyList<Offset>()) }
     var selection by remember { mutableStateOf(emptyList<Offset>()) }
@@ -116,8 +127,20 @@ fun MotionCanvasApp() {
     var frameIndex by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
 
+    fun copyBitmap(source: Bitmap): Bitmap = source.copy(Bitmap.Config.ARGB_8888, true)
+
+    fun saveRasterFrame() {
+        rasterFrames = rasterFrames.toMutableList().also { it[frameIndex] = rasterLayers.map { bitmap -> copyBitmap(bitmap) } }
+    }
+
+    fun loadRasterFrame(index: Int) {
+        if (index !in rasterFrames.indices) return
+        rasterLayers = rasterFrames[index].map { bitmap -> copyBitmap(bitmap) }
+    }
+
     fun saveFrame() {
         if (frameIndex !in frameData.indices) return
+        saveRasterFrame()
         val old = frameData[frameIndex]
         frameData = frameData.toMutableList().also {
             it[frameIndex] = Frame(currentStrokes.mapIndexed { i, strokes ->
@@ -130,6 +153,7 @@ fun MotionCanvasApp() {
         if (index !in frameData.indices) return
         frameIndex = index
         currentStrokes = layers.indices.map { frameData[index].layers.getOrNull(it)?.strokes ?: emptyList() }
+        loadRasterFrame(index)
         selectedStrokeIds = emptySet()
         selection = emptyList()
     }
@@ -176,16 +200,36 @@ fun MotionCanvasApp() {
                 }
                 else -> stabilized
             }
+            if (tool == Tool.BRUSH || tool == Tool.ERASER) {
+                val bitmap = rasterLayers[selectedLayer]
+                val androidCanvas = AndroidCanvas(bitmap)
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG or AndroidPaint.DITHER_FLAG)
+                paint.color = if (tool == Tool.ERASER) android.graphics.Color.TRANSPARENT else brush.toArgb()
+                paint.alpha = (opacity.coerceIn(0f, 1f) * 255f).toInt()
+                paint.style = AndroidPaint.Style.STROKE
+                paint.strokeWidth = width.coerceAtLeast(1f)
+                paint.strokeCap = AndroidPaint.Cap.ROUND
+                paint.strokeJoin = AndroidPaint.Join.ROUND
+                if (tool == Tool.ERASER) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                val path = android.graphics.Path()
+                path.moveTo(points.first().x, points.first().y)
+                points.drop(1).forEach { path.lineTo(it.x, it.y) }
+                androidCanvas.drawPath(path, paint)
+                rasterLayers = rasterLayers.toMutableList().also { it[selectedLayer] = bitmap }
+                saveRasterFrame()
+            }
             val stroke = Stroke(
                 points,
-                if (tool == Tool.ERASER) Color.White else brush,
+                if (tool == Tool.ERASER) Color.Transparent else brush,
                 width,
                 opacity,
                 closed = tool == Tool.RECTANGLE || tool == Tool.ELLIPSE,
                 filled = shapeFilled && (tool == Tool.RECTANGLE || tool == Tool.ELLIPSE)
             )
             val updated = currentStrokes.toMutableList()
-            updated[selectedLayer] = updated[selectedLayer] + stroke
+            if (tool != Tool.BRUSH && tool != Tool.ERASER) {
+                updated[selectedLayer] = updated[selectedLayer] + stroke
+            }
 
             if (symmetry && tool != Tool.SELECT) {
                 val axisX = sizeOfCanvasFallback(symmetryAxis)
@@ -225,18 +269,21 @@ fun MotionCanvasApp() {
     fun addFrame() {
         saveFrame()
         frameData = frameData.toMutableList().also { it.add(frameIndex + 1, Frame(layers.map { LayerFrame() })) }
+        rasterFrames = rasterFrames.toMutableList().also { it.add(frameIndex + 1, rasterLayers.map { Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888) }) }
         loadFrame(frameIndex + 1)
     }
 
     fun duplicateFrame() {
         saveFrame()
         frameData = frameData.toMutableList().also { it.add(frameIndex + 1, frameData[frameIndex]) }
+        rasterFrames = rasterFrames.toMutableList().also { it.add(frameIndex + 1, rasterLayers.map { bitmap -> copyBitmap(bitmap) }) }
         loadFrame(frameIndex + 1)
     }
 
     fun deleteFrame() {
         if (frameData.size > 1) {
             frameData = frameData.toMutableList().also { it.removeAt(frameIndex) }
+            rasterFrames = rasterFrames.toMutableList().also { it.removeAt(frameIndex) }
             loadFrame(frameIndex.coerceAtMost(frameData.lastIndex))
         }
     }
@@ -253,7 +300,9 @@ fun MotionCanvasApp() {
         saveFrame()
         layers = layers + ArtLayer("Layer " + (layers.size + 1))
         currentStrokes = currentStrokes + emptyList()
+        rasterLayers = rasterLayers + Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
         frameData = frameData.map { it.copy(layers = it.layers + LayerFrame()) }
+        rasterFrames = rasterFrames.map { frame -> frame + Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888) }
         selectedLayer = layers.lastIndex
     }
 
@@ -263,6 +312,8 @@ fun MotionCanvasApp() {
             layers = layers.toMutableList().also { it.removeAt(selectedLayer) }
             currentStrokes = currentStrokes.toMutableList().also { it.removeAt(selectedLayer) }
             frameData = frameData.map { f -> f.copy(layers = f.layers.filterIndexed { i, _ -> i != selectedLayer }) }
+            rasterLayers = rasterLayers.filterIndexed { i, _ -> i != selectedLayer }
+            rasterFrames = rasterFrames.map { frame -> frame.filterIndexed { i, _ -> i != selectedLayer } }
             selectedLayer = max(0, selectedLayer - 1)
         }
     }
@@ -373,6 +424,12 @@ fun MotionCanvasApp() {
                     if (onionSkin && frameIndex > 0) {
                         frameData[frameIndex - 1].layers.forEach { layer ->
                             layer.strokes.forEach { s -> drawStroke(this, s, Color.Red.copy(alpha = 0.14f)) }
+                        }
+                    }
+
+                    rasterLayers.forEachIndexed { index, bitmap ->
+                        if (layers.getOrNull(index)?.visible == true) {
+                            drawImage(bitmap.asImageBitmap())
                         }
                     }
 
