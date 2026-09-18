@@ -1329,9 +1329,17 @@ fun MotionCanvasApp() {
                                 } else {
                                     if (tool == Tool.SELECT && selectedStrokeIds.isNotEmpty() && transformSourceBox != null && transformDragStart != null) {
                                         val source = transformSourceBox!!
-                                        val updated = activeTransformInteraction?.let { TransformInteractionController.move(it, artPoint) }
-                                            ?: source.copy(center = source.center + (artPoint - transformDragStart!!))
-                                        if (updated != null) applySelectedTransform(source, updated)
+                                        if (activeTransformInteraction?.handle == TransformHandle.PIVOT) {
+                                            val pivot = Offset(
+                                                artPoint.x.coerceIn(source.left, source.right),
+                                                artPoint.y.coerceIn(source.top, source.bottom)
+                                            )
+                                            selectedTransformBox = source.copy(pivot = pivot)
+                                        } else {
+                                            val updated = activeTransformInteraction?.let { TransformInteractionController.move(it, artPoint) }
+                                                ?: source.copy(center = source.center + (artPoint - transformDragStart!!))
+                                            if (updated != null) applySelectedTransform(source, updated)
+                                        }
                                     } else {
                                         current = current + artPoint
                                         if (tool == Tool.SELECT) selection = selection + artPoint
