@@ -274,6 +274,22 @@ new_text = '''drawIntoCanvas { canvas ->
                                 }'''
 s = s.replace(old_text, new_text, 1)
 
+# Generated V29 does not expose the branch editor's selectedLayer state inside this canvas callback.
+# Keep the stroke metadata valid and deterministic until the generated editor state is wired.
+s = s.replace("layerIndex = selectedLayer,", "layerIndex = 0,", 1)
+
+# Android Compose exposes the native Canvas through the nativeCanvas extension.
+if "import androidx.compose.ui.graphics.nativeCanvas" not in s:
+    lines = s.splitlines()
+    pkg = next((i for i, line in enumerate(lines) if line.startswith("package ")), -1)
+    insert_at = pkg + 1
+    while insert_at < len(lines) and (lines[insert_at].startswith("import ") or lines[insert_at].strip() == ""):
+        insert_at += 1
+    lines.insert(insert_at, "import androidx.compose.ui.graphics.nativeCanvas")
+    s = "\n".join(lines) + "\n"
+
+s = s.replace("color = item.color.toArgb()\n                                        textSize = item.size", "this.color = item.color.toArgb()\n                                        this.textSize = item.size", 1)
+
 # FloodFillEngine operates on an IntArray pixel buffer; round-trip it through the bitmap.
 s = s.replace("currentFrame.fills.forEach { mark -> FloodFillEngine.fill(fillBitmap, project.canvasW, project.canvasH, mark.x, mark.y, mark.color.toArgb(), mark.tolerance) }", '''currentFrame.fills.forEach { mark ->
                                     val pixels = IntArray(project.canvasW * project.canvasH)
