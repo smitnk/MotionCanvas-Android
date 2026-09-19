@@ -69,7 +69,15 @@ data class Stroke(
     val closed: Boolean = false,
     val filled: Boolean = false
 )
-data class ArtLayer(val name: String, val visible: Boolean = true, val opacity: Float = 1f, val clipToBelow: Boolean = false)
+enum class LayerBlendMode { NORMAL, MULTIPLY, SCREEN, OVERLAY, ADD }
+
+data class ArtLayer(
+    val name: String,
+    val visible: Boolean = true,
+    val opacity: Float = 1f,
+    val clipToBelow: Boolean = false,
+    val blendMode: LayerBlendMode = LayerBlendMode.NORMAL
+)
 data class LayerFrame(val strokes: List<Stroke> = emptyList(), val hold: Int = 1)
 data class Frame(val layers: List<LayerFrame> = emptyList())
 enum class Tool { BRUSH, ERASER, LINE, RECTANGLE, ELLIPSE, SELECT, FILL, EYEDROPPER }
@@ -268,17 +276,52 @@ fun MotionCanvasApp() {
             rasterFrames = loaded; frameData = List(count) { Frame(layers.map { LayerFrame() }) }; loadFrame(0); exportStatus = "Project loaded"
         } catch (e: Exception) { exportStatus = "Load failed" }
     }
+    fun blendPorterDuff(mode: LayerBlendMode): PorterDuff.Mode? = when (mode) {
+        LayerBlendMode.NORMAL -> null
+        LayerBlendMode.MULTIPLY -> PorterDuff.Mode.MULTIPLY
+        LayerBlendMode.SCREEN -> PorterDuff.Mode.SCREEN
+        LayerBlendMode.OVERLAY -> PorterDuff.Mode.OVERLAY
+        LayerBlendMode.ADD -> PorterDuff.Mode.ADD
+    }
+
+    fun composeVisibleLayers(): Bitmap {
+        val output = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(output)
+        canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        rasterLayers.forEachIndexed { i, source ->
+            val layer = layers.getOrNull(i) ?: return@forEachIndexed
+            if (!layer.visible || source.isRecycled) return@forEachIndexed
+            var drawable = source
+            var temporary: Bitmap? = null
+            if (layer.clipToBelow && i > 0) {
+                val below = rasterLayers.getOrNull(i - 1)
+                if (below != null && !below.isRecycled) {
+                    temporary = source.copy(Bitmap.Config.ARGB_8888, true)
+                    val maskCanvas = AndroidCanvas(temporary)
+                    val maskPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                    maskPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                    maskCanvas.drawBitmap(below, 0f, 0f, maskPaint)
+                    maskPaint.xfermode = null
+                    drawable = temporary
+                }
+            }
+            val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG or AndroidPaint.DITHER_FLAG)
+            paint.alpha = (layer.opacity.coerceIn(0f, 1f) * 255f).toInt()
+            blendPorterDuff(layer.blendMode)?.let { paint.xfermode = PorterDuffXfermode(it) }
+            canvas.drawBitmap(drawable, 0f, 0f, paint)
+            paint.xfermode = null
+            temporary?.recycle()
+        }
+        return output
+    }
+
     fun exportCurrentPng() {
         val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
         val canvas = AndroidCanvas(merged)
         canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        rasterLayers.forEachIndexed { i, bitmap ->
-            if (layers.getOrNull(i)?.visible == true) {
-                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-                paint.alpha = (layers[i].opacity.coerceIn(0f, 1f) * 255f).toInt()
-                canvas.drawBitmap(bitmap, 0f, 0f, paint)
-            }
-        }
+        val composed = composeVisibleLayers()
+        canvas.drawBitmap(composed, 0f, 0f, null)
+        composed.recycle()
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "MotionCanvas_F${frameIndex + 1}.png")
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
@@ -1252,11 +1295,9 @@ fun MotionCanvasApp() {
                         }
                     }
 
-                    rasterLayers.forEachIndexed { index, bitmap ->
-                        if (layers.getOrNull(index)?.visible == true) {
-                            drawImage(bitmap.asImageBitmap())
-                        }
-                    }
+                    val composed = composeVisibleLayers()
+                    drawImage(composed.asImageBitmap())
+                    composed.recycle()
 
                     if (weightPaintMode && editStrokeIndex != null) {
                         ensureWeightJoints()
@@ -1365,6 +1406,7 @@ fun MotionCanvasApp() {
             Surface(Modifier.width(132.dp).fillMaxHeight(), tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxSize()) {
                     Text("Layers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(10.dp))
+            Text("Clip = alpha mask • B = blend", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 10.dp))
                     LazyColumn(Modifier.weight(1f)) {
                         itemsIndexed(layers) { index, layer ->
                             Surface(
@@ -1375,9 +1417,21 @@ fun MotionCanvasApp() {
                                     Text(if (layer.visible) "◉" else "○", Modifier.clickable { toggleLayerVisibility(index) }.padding(4.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(layer.name)
-                                        Text(if (currentStrokes.getOrNull(index)?.isNotEmpty() == true) "Content" else "Empty",
+                                        Text((if (layer.clipToBelow) "Clip • " else "") + layer.blendMode.name,
                                             style = MaterialTheme.typography.labelSmall)
                                     }
+                                    Button(onClick = {
+                                        layers = layers.toMutableList().also {
+                                            it[index] = it[index].copy(clipToBelow = !it[index].clipToBelow)
+                                        }
+                                    }, enabled = index > 0) { Text(if (layer.clipToBelow) "Unclip" else "Clip") }
+                                    Button(onClick = {
+                                        val modes = LayerBlendMode.entries
+                                        val next = modes[(modes.indexOf(layer.blendMode) + 1) % modes.size]
+                                        layers = layers.toMutableList().also {
+                                            it[index] = it[index].copy(blendMode = next)
+                                        }
+                                    }) { Text("B") }
                                 }
                             }
                         }
