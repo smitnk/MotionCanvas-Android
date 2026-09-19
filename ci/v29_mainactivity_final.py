@@ -217,5 +217,12 @@ fun OnionSkinSettingsDialog''',
     count=1,
 )
 
+# Final structural fix: EditorScreen must close before OnionSkinSettingsDialog.
+needle = "@Composable\nfun OnionSkinSettingsDialog("
+pos = s.find(needle)
+if pos >= 0:
+    before = s[:pos]
+    if not before.rstrip().endswith("}"):
+        s = before.rstrip() + "\n}\n\n" + s[pos:]
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
