@@ -380,5 +380,43 @@ preview_code = '''                            // Live preview while the pointer 
 
                             // Motion trails: persistent colored ghost strokes for trajectory reading.'''
 s = s.replace(preview_marker, preview_code, 1)
+
+# Runtime canvas state repair:
+# currentDrawingPoints/currentFrame are ordinary mutable collections. Increment the
+# observed canvas revision whenever drawing input mutates them so Compose redraws.
+import re
+s = re.sub(
+    r'(currentDrawingPoints\.add\(DrawPoint\([^\n]+\)\))\n(?!\s*canvasRevision\+\+)',
+    r'\1\n                                    canvasRevision++',
+    s
+)
+s = s.replace(
+    'if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)\n                                    }',
+    'if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)\n                                        canvasRevision++\n                                    }',
+    2
+)
+
+# The live preview must be rendered after the composed layer bitmap is drawn;
+# otherwise the later bitmap draw can cover the preview.
+preview_start = s.find('                            // Live preview while the pointer is down.')
+if preview_start >= 0:
+    preview_end = s.find('                            // Motion trails:', preview_start)
+    if preview_end >= 0:
+        preview = s[preview_start:preview_end]
+        s = s[:preview_start] + s[preview_end:]
+        composite_marker = 'drawImage(composedLayers.asImageBitmap())'
+        ci = s.find(composite_marker)
+        if ci >= 0:
+            insert_at = s.find('\n', ci)
+            s = s[:insert_at+1] + '\n' + preview + s[insert_at+1:]
+
+# Make brush presets available in the main toolbar by default when the generated
+# workspace state exposes that toggle.
+s = s.replace(
+    'brushPresetsWidget = false',
+    'brushPresetsWidget = true',
+    1
+)
+
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
