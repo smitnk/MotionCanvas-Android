@@ -448,7 +448,7 @@ live_overlay = """                            // Live drawing overlay (must be a
 
 """
 if "Live drawing overlay (must be after composed layer bitmap)." not in s:
-    marker2 = "currentFrame.strokes.forEach { stroke ->"
+    marker2 = "currentFrame.strokes.forEach { s ->"
     if marker2 in s:
         s = s.replace(marker2, live_overlay + marker2, 1)
 s = re.sub(r'(\bbrushPresetsWidget\s*=\s*)false\b', r'\1true', s, count=1)
