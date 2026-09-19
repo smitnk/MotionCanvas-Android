@@ -8,7 +8,13 @@ for imp in [
     "import androidx.compose.foundation.gestures.detectTransformGestures",
 ]:
     if imp not in s:
-        s = imp + "\n" + s
+        lines = s.splitlines()
+        pkg = next((i for i, line in enumerate(lines) if line.startswith("package ")), -1)
+        insert_at = pkg + 1
+        while insert_at < len(lines) and (lines[insert_at].startswith("import ") or lines[insert_at].strip() == ""):
+            insert_at += 1
+        lines.insert(insert_at, imp)
+        s = "\n".join(lines) + ("\n" if s.endswith("\n") else "")
 
 s = s.replace("\nfun EditorScreen(\n", "\n@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(\n", 1)
 if "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(" not in s:
