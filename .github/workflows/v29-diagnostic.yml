@@ -19,3 +19,29 @@ jobs:
           echo "Commit: $GITHUB_SHA"
           test -f MotionCanvas-v29-restart-clean.zip
           unzip -l MotionCanvas-v29-restart-clean.zip | head -40
+
+      - name: Extract and patch V29 source
+        run: |
+          rm -rf build-source
+          mkdir build-source
+          unzip -q MotionCanvas-v29-restart-clean.zip -d build-source
+          python3 ci/v29_patch.py
+          python3 ci/v29_mainactivity_final.py
+          python3 ci/v29_media3_fix.py
+
+      - name: Dump canvas input and rendering source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/MainActivity.kt")
+          lines = p.read_text().splitlines()
+          for a,b in [(1740,2050)]:
+              print(f"--- MAINACTIVITY CANVAS REGION {a}:{b} ---")
+              for i in range(a-1,min(b,len(lines))):
+                  print(f"{i+1}: {lines[i]}")
+          q = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/drawing/CanvasGestureDetector.kt")
+          if q.exists():
+              print("--- CANVAS GESTURE DETECTOR ---")
+              for i,line in enumerate(q.read_text().splitlines(),1):
+                  print(f"{i}: {line}")
+          PY
