@@ -32,8 +32,11 @@ jobs:
           gradle-version: "8.9"
       - name: Apply source compatibility patch
         run: python3 ci/v29_patch.py
+      - name: Apply final MainActivity syntax repair
+        run: python3 ci/v29_mainactivity_final.py
       - name: Apply Media3 compatibility patch
-        run: python3 ci/v29_media3_fix.py
+        run: |
+          sed -i 's/androidx.media3:\([^:]*\):1.11.1/androidx.media3:\1:1.4.1/g' build-source/app/build.gradle.kts
       - name: Verify dependency versions
         run: |
           grep -n 'media3' build-source/app/build.gradle.kts
