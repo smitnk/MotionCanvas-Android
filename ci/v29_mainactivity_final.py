@@ -384,15 +384,27 @@ s = s.replace(preview_marker, preview_code, 1)
 # Runtime canvas state repair:
 # currentDrawingPoints/currentFrame are ordinary mutable collections. Increment the
 # observed canvas revision whenever drawing input mutates them so Compose redraws.
-import re
-s = re.sub(
-    r'(currentDrawingPoints\.add\(DrawPoint\([^\n]+\)\))\n(?!\s*canvasRevision\+\+)',
-    r'\1\n                                    canvasRevision++',
-    s
+# Do this with explicit generated-source fragments rather than a broad regex, so
+# shape branches containing multiple statements on one line remain valid Kotlin.
+s = s.replace(
+    "currentDrawingPoints.add(DrawPoint(canvasPoint.x, canvasPoint.y, pressure))",
+    "currentDrawingPoints.add(DrawPoint(canvasPoint.x, canvasPoint.y, pressure))\n                                    canvasRevision++"
 )
 s = s.replace(
-    'if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)\n                                    }',
-    'if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)\n                                        canvasRevision++\n                                    }',
+    "canvasRevision++                                        currentDrawingPoints.add",
+    "canvasRevision++\n                                        currentDrawingPoints.add"
+)
+s = s.replace(
+    "canvasRevision++                                    }",
+    "canvasRevision++\n                                    }"
+)
+s = s.replace(
+    "canvasRevision++                                }",
+    "canvasRevision++\n                                }"
+)
+s = s.replace(
+    "if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)\n                                    }",
+    "if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)\n                                        canvasRevision++\n                                    }",
     2
 )
 
