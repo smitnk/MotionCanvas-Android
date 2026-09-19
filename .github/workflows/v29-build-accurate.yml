@@ -70,3 +70,4 @@ jobs:
           path: build-source/app/build/outputs/apk/debug/*.apk
 
 # Trigger build after final V29 repair
+# Manual trigger requested
