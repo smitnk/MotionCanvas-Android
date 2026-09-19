@@ -419,15 +419,38 @@ s = s.replace(
 )
 
 # Ensure live brush/lasso overlays are rendered after the composed bitmap.
-import re
+live_overlay = """                            // Live drawing overlay (must be after composed layer bitmap).
+                            if (tool != ToolType.Select && tool != ToolType.Lasso && tool != ToolType.Eyedropper && currentDrawingPoints.size > 1) {
+                                val previewPath = OpenSourceStrokeSmoother.build(
+                                    OpenSourceDrawingEngine.smooth(currentDrawingPoints.map { Offset(it.x, it.y) })
+                                )
+                                drawPath(
+                                    previewPath,
+                                    if (tool == ToolType.Eraser) project.backgroundColor else color,
+                                    style = Stroke(
+                                        width = pressureAdjustedWidth(size, currentDrawingPoints),
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+                            if (tool == ToolType.Lasso && lassoPoints.size > 1) {
+                                val lassoPath = Path().apply {
+                                    moveTo(lassoPoints.first().x, lassoPoints.first().y)
+                                    lassoPoints.drop(1).forEach { lineTo(it.x, it.y) }
+                                }
+                                drawPath(
+                                    lassoPath,
+                                    PinkAccent,
+                                    style = Stroke(width = 2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                            }
+
+"""
 if "Live drawing overlay (must be after composed layer bitmap)." not in s:
-    s = re.sub(
-        r'(?m)^(\s*drawImage\([^\n]*asImageBitmap\(\)\)\s*)
-,
-        lambda m: m.group(1) + "\n" + "                            // Live drawing overlay (must be after composed layer bitmap).\n                            if (tool != ToolType.Select && tool != ToolType.Lasso && tool != ToolType.Eyedropper && currentDrawingPoints.size > 1) {\n                                val previewPath = OpenSourceStrokeSmoother.build(\n                                    OpenSourceDrawingEngine.smooth(currentDrawingPoints.map { Offset(it.x, it.y) })\n                                )\n                                drawPath(\n                                    previewPath,\n                                    if (tool == ToolType.Eraser) project.backgroundColor else color,\n                                    style = Stroke(\n                                        width = pressureAdjustedWidth(size, currentDrawingPoints),\n                                        cap = StrokeCap.Round,\n                                        join = StrokeJoin.Round\n                                    )\n                                )\n                            }\n                            if (tool == ToolType.Lasso && lassoPoints.size > 1) {\n                                val lassoPath = Path().apply {\n                                    moveTo(lassoPoints.first().x, lassoPoints.first().y)\n                                    lassoPoints.drop(1).forEach { lineTo(it.x, it.y) }\n                                }\n                                drawPath(\n                                    lassoPath,\n                                    PinkAccent,\n                                    style = Stroke(width = 2f, cap = StrokeCap.Round, join = StrokeJoin.Round)\n                                )\n                            }\n\n",
-        s,
-        count=1
-    )
+    marker2 = "drawImage(composedLayers.asImageBitmap())"
+    if marker2 in s:
+        s = s.replace(marker2, marker2 + "\n" + live_overlay, 1)
 s = re.sub(r'(\bbrushPresetsWidget\s*=\s*)false\b', r'\1true', s, count=1)
 
 p.write_text(s)
