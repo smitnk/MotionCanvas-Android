@@ -87,6 +87,32 @@ topbar = '''    Scaffold(
 '''
 s = s[:scaffold] + topbar + s[bottom_bar:]
 
+# Deterministic cleanup of malformed source fragments after scaffold replacement.
+bad1 = """                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true }
+                ),
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {"""
+good1 = """                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true },
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {"""
+s = s.replace(bad1, good1, 1)
+
+# The generated editor had one extra top-level brace before OnionSkinSettingsDialog.
+s = s.replace("""    }
+    }
+
+
+@Composable
+fun OnionSkinSettingsDialog""", """    }
+
+
+@Composable
+fun OnionSkinSettingsDialog""", 1)
+
 lines = s.splitlines()
 for start, end in [(1460,1510),(2310,2340)]:
     print(f"--- MAINACTIVITY {start}:{end} ---")
