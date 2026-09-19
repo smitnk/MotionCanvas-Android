@@ -1041,10 +1041,10 @@ fun MotionCanvasApp() {
             Surface(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), color = Color(0xFF202020)) {
                 Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Inspector", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                    Text("Layer $" + (selectedLayer + 1), color = Color.LightGray)
-                    Text("Frame $" + (frameIndex + 1) + "/" + frameData.size, color = Color.LightGray)
-                    Text("Zoom $" + (scale * 100).toInt() + "%", color = Color.LightGray)
-                    Text("Rotation $" + rotation.toInt() + "°", color = Color.LightGray)
+                    Text("Layer " + (selectedLayer + 1), color = Color.LightGray)
+                    Text("Frame " + (frameIndex + 1) + "/" + frameData.size, color = Color.LightGray)
+                    Text("Zoom " + (scale * 100).toInt() + "%", color = Color.LightGray)
+                    Text("Rotation " + rotation.toInt() + "°", color = Color.LightGray)
                 }
             }
         }
