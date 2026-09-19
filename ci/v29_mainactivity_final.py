@@ -3,8 +3,13 @@ from pathlib import Path
 p = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/MainActivity.kt")
 s = p.read_text()
 
-# The clean V29 source contains the complete editor implementation. Repair only
-# the generated editor declaration and the malformed Scaffold top-bar region.
+for imp in [
+    "import kotlinx.coroutines.launch",
+    "import androidx.compose.foundation.gestures.detectTransformGestures",
+]:
+    if imp not in s:
+        s = imp + "\n" + s
+
 s = s.replace("\nfun EditorScreen(\n", "\n@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(\n", 1)
 if "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(" not in s:
     s = s.replace("@Composable\nfun EditorScreen(", "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(", 1)
@@ -13,8 +18,6 @@ editor = s.index("@Composable\nfun EditorScreen(")
 scaffold = s.index("    Scaffold(\n", editor)
 bottom_bar = s.index("        bottomBar = {", scaffold)
 
-# Keep every existing workspace action, but place them in one balanced
-# TopAppBar/actions scope. This fixes the prior visibility-edit brace damage.
 topbar = '''    Scaffold(
         containerColor = AppBackground,
         topBar = {
@@ -24,7 +27,7 @@ topbar = '''    Scaffold(
                     navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = White) } },
                     actions = {
                         IconButton(onClick = { zoomPanState.zoomOut() }) { Icon(Icons.Default.ZoomOut, "Zoom out", tint = White) }
-                        TextButton(onClick = { zoomPanState.reset() }) { Text("${zoomPanState.zoomPercent}%", color = if (zoomPanState.zoom != 1f || zoomPanState.pan != Offset.Zero) PinkAccent else White, fontSize = 12.sp) }
+                        TextButton(onClick = { zoomPanState.reset() }) { Text("\${zoomPanState.zoomPercent}%", color = if (zoomPanState.zoom != 1f || zoomPanState.pan != Offset.Zero) PinkAccent else White, fontSize = 12.sp) }
                         IconButton(onClick = { zoomPanState.zoomIn() }) { Icon(Icons.Default.ZoomIn, "Zoom in", tint = White) }
                         if (zoomPanState.zoom != 1f || zoomPanState.pan != Offset.Zero) {
                             IconButton(onClick = { zoomPanState.reset() }) { Icon(Icons.Default.RestartAlt, "Reset view", tint = PinkAccent) }
@@ -53,5 +56,12 @@ topbar = '''    Scaffold(
         },
 '''
 s = s[:scaffold] + topbar + s[bottom_bar:]
+
+lines = s.splitlines()
+for start, end in [(1460,1510),(2310,2340)]:
+    print(f"--- MAINACTIVITY {start}:{end} ---")
+    for i in range(start, min(end, len(lines)) + 1):
+        print(f"{i}: {lines[i-1]}")
+
 p.write_text(s)
-print("V29 MainActivity top-bar scope repair applied")
+print("V29 MainActivity repair + diagnostics applied")
