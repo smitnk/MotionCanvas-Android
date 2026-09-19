@@ -87,6 +87,33 @@ topbar = '''    Scaffold(
 '''
 s = s[:scaffold] + topbar + s[bottom_bar:]
 
+# Deterministic cleanup of malformed source fragments after scaffold replacement.
+bad1 = """                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true }
+                ),
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {"""
+good1 = """                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true },
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {"""
+s = s.replace(bad1, good1, 1)
+
+# The generated editor had one extra top-level brace before OnionSkinSettingsDialog.
+s = s.replace("""    }
+    }
+
+
+@Composable
+fun OnionSkinSettingsDialog""", """    }
+
+
+@Composable
+fun OnionSkinSettingsDialog""", 1)
+
+
 # IMPORTANT: cleanup must run AFTER scaffold replacement because that replacement
 # recreates these two malformed fragments.
 bad_toolbar = """                if (workspaceVisibility.brushPresetsWidget) {
@@ -114,32 +141,6 @@ good_brace = """    }
 @Composable
 fun OnionSkinSettingsDialog"""
 s = s.replace(bad_brace, good_brace, 1)
-
-# Deterministic cleanup of malformed source fragments after scaffold replacement.
-bad1 = """                if (workspaceVisibility.brushPresetsWidget) {
-                IconButton(
-                    onClick = { showBrushPresets = true }
-                ),
-                    modifier = Modifier.background(Color.Transparent, CircleShape)
-                ) {"""
-good1 = """                if (workspaceVisibility.brushPresetsWidget) {
-                IconButton(
-                    onClick = { showBrushPresets = true },
-                    modifier = Modifier.background(Color.Transparent, CircleShape)
-                ) {"""
-s = s.replace(bad1, good1, 1)
-
-# The generated editor had one extra top-level brace before OnionSkinSettingsDialog.
-s = s.replace("""    }
-    }
-
-
-@Composable
-fun OnionSkinSettingsDialog""", """    }
-
-
-@Composable
-fun OnionSkinSettingsDialog""", 1)
 
 lines = s.splitlines()
 for start, end in [(1460,1510),(2310,2340)]:
