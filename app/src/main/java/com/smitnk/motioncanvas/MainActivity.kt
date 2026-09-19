@@ -44,7 +44,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.ui.input.pointer.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -265,7 +265,7 @@ fun MotionCanvasApp() {
                     else Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
                 })
             }
-            rasterFrames = loaded; frameData = List(count) { Frame(layers.map { LayerFrame() }) }; loadFrame(0); exportStatus = "Project loaded"
+            rasterFrames = loaded; frameData = List(count) { Frame(layers.map { LayerFrame() }) }; frameIndex = 0; currentStrokes = layers.map { emptyList() }; rasterLayers = rasterFrames.firstOrNull() ?: rasterLayers; exportStatus = "Project loaded"
         } catch (e: Exception) { exportStatus = "Load failed" }
     }
     fun exportCurrentPng() {
@@ -418,7 +418,15 @@ fun MotionCanvasApp() {
         val index = editStrokeIndex ?: return
         val strokes = currentStrokes.getOrNull(selectedLayer) ?: return
         if (index !in strokes.indices || strokes[index].points.size < 2) return
-        addEditNode()
+        snapshot()
+        val nodes = strokes[index].points.toMutableList()
+        val at = (editNodeIndex + 1).coerceIn(1, nodes.size - 1)
+        val a = nodes[at - 1]; val b = nodes[at]
+        nodes.add(at, Offset((a.x + b.x) / 2f, (a.y + b.y) / 2f))
+        currentStrokes = currentStrokes.toMutableList().also {
+            it[selectedLayer] = strokes.toMutableList().also { list -> list[index] = stroke.copy(points = nodes) }
+        }
+        editNodeIndex = at
     }
 
     fun addEditNode() {
@@ -694,11 +702,11 @@ fun MotionCanvasApp() {
                 saveRasterFrame()
             }
             val stroke = Stroke(
-                points,
-                currentPressures,
-                if (tool == Tool.ERASER) Color.Transparent else brush,
-                width,
-                opacity,
+                points = points,
+                pressures = currentPressures,
+                color = if (tool == Tool.ERASER) Color.Transparent else brush,
+                width = width,
+                opacity = opacity,
                 closed = tool == Tool.RECTANGLE || tool == Tool.ELLIPSE,
                 filled = shapeFilled && (tool == Tool.RECTANGLE || tool == Tool.ELLIPSE)
             )
@@ -1327,7 +1335,7 @@ fun MotionCanvasApp() {
                         }
                         drawStroke(
                             this,
-                            Stroke(preview, emptyList(), if (tool == Tool.ERASER) Color.White else brush, width, opacity,
+                            Stroke(points = preview, color = if (tool == Tool.ERASER) Color.White else brush, width = width, opacity = opacity,
                                 closed = tool == Tool.RECTANGLE, filled = shapeFilled && tool == Tool.RECTANGLE)
                         )
                     }
@@ -1440,7 +1448,7 @@ private fun sizeOfCanvasFallback(axis: Float): Float = 500f * axis
 private fun drawStroke(
     scope: androidx.compose.ui.graphics.drawscope.DrawScope,
     stroke: Stroke,
-    color: Color,
+    color: Color = stroke.color,
     outline: Boolean = false
 ) {
     if (stroke.points.isEmpty()) return
@@ -1454,7 +1462,7 @@ private fun drawStroke(
                 val c2 = Offset(b.x + stroke.inHandles[i + 1].x, b.y + stroke.inHandles[i + 1].y)
                 path.cubicTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y)
             }
-        } else stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
+        } else stroke.points.drop(1).forEach { path.lineTo(it.x, it.y) }
         if (stroke.closed) close()
     }
     if (stroke.filled && !outline) {
