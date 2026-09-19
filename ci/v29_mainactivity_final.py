@@ -8,34 +8,14 @@ for imp in [
     "import androidx.compose.foundation.gestures.detectTransformGestures",
 ]:
     if imp not in s:
-        # Last-pass line-based repair on the actual generated Kotlin source.
-src = s.splitlines()
+        lines = s.splitlines()
+        pkg = next((i for i, line in enumerate(lines) if line.startswith("package ")), -1)
+        insert_at = pkg + 1
+        while insert_at < len(lines) and (lines[insert_at].startswith("import ") or lines[insert_at].strip() == ""):
+            insert_at += 1
+        lines.insert(insert_at, imp)
+        s = "\n".join(lines) + ("\n" if s.endswith("\n") else "")
 
-# Normalize the Brush Presets block by structure, not whitespace.
-for idx, line in enumerate(src):
-    if "if (workspaceVisibility.brushPresetsWidget)" in line:
-        src[idx:idx+7] = [
-            "                if (workspaceVisibility.brushPresetsWidget) {",
-            "                IconButton(",
-            "                    onClick = { showBrushPresets = true },",
-            "                    modifier = Modifier.background(Color.Transparent, CircleShape)",
-            "                ) {",
-            '                    Icon(Icons.Default.AutoFixHigh, contentDescription = "Brush presets", tint = White)',
-            "                }",
-        ]
-        break
-
-# Remove exactly one duplicate closing brace immediately before OnionSkinSettingsDialog.
-for idx, line in enumerate(src):
-    if "fun OnionSkinSettingsDialog" in line:
-        j = idx - 1
-        while j >= 0 and src[j].strip() == "":
-            j -= 1
-        if j >= 1 and src[j].strip() == "}" and src[j-1].strip() == "}":
-            del src[j]
-        break
-
-s = "\n".join(src) + ("\n" if s.endswith("\n") else "")
 lines = s.splitlines()
         pkg = next((i for i, line in enumerate(lines) if line.startswith("package ")), -1)
         insert_at = pkg + 1
@@ -114,6 +94,31 @@ topbar = '''    Scaffold(
         },
 '''
 s = s[:scaffold] + topbar + s[bottom_bar:]
+# Final line-structure repair after the scaffold rewrite.
+src = s.splitlines()
+for idx, line in enumerate(src):
+    if "if (workspaceVisibility.brushPresetsWidget)" in line:
+        src[idx:idx+7] = [
+            "                if (workspaceVisibility.brushPresetsWidget) {",
+            "                IconButton(",
+            "                    onClick = { showBrushPresets = true },",
+            "                    modifier = Modifier.background(Color.Transparent, CircleShape)",
+            "                ) {",
+            '                    Icon(Icons.Default.AutoFixHigh, contentDescription = "Brush presets", tint = White)',
+            "                }",
+        ]
+        break
+for idx, line in enumerate(src):
+    if "fun OnionSkinSettingsDialog" in line:
+        j = idx - 1
+        while j >= 0 and src[j].strip() == "":
+            j -= 1
+        if j >= 1 and src[j].strip() == "}" and src[j-1].strip() == "}":
+            del src[j]
+        break
+s = "\n".join(src) + ("\n" if s.endswith("\n") else "")
+
+
 # Final source-level repair: normalize the malformed Brush Presets IconButton.
 import re
 s, n_toolbar = re.subn(
