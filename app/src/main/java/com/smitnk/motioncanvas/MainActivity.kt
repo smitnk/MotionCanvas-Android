@@ -198,6 +198,12 @@ fun MotionCanvasApp() {
     var frameIndex by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf("") }
+    // Workspace visibility controls: keep the canvas usable on phones while allowing each editor area to be hidden.
+    var showTopBar by remember { mutableStateOf(true) }
+    var showToolBar by remember { mutableStateOf(true) }
+    var showLayersPanel by remember { mutableStateOf(true) }
+    var showTimeline by remember { mutableStateOf(true) }
+    var showInspector by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     fun artScale(): Float {
@@ -972,7 +978,22 @@ fun MotionCanvasApp() {
     }
 
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().background(Color(0xFF111111))) {
+        // Persistent workspace switcher. These controls remain available even when a panel is hidden.
+        Row(
+            Modifier.fillMaxWidth().background(Color(0xFF1B1B1B)).padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Workspace", color = Color.White, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 4.dp))
+            FilterChip(showTopBar, { showTopBar = !showTopBar }, label = { Text("Top") })
+            FilterChip(showToolBar, { showToolBar = !showToolBar }, label = { Text("Tools") })
+            FilterChip(showLayersPanel, { showLayersPanel = !showLayersPanel }, label = { Text("Layers") })
+            FilterChip(showTimeline, { showTimeline = !showTimeline }, label = { Text("Timeline") })
+            FilterChip(showInspector, { showInspector = !showInspector }, label = { Text("Inspector") })
+        }
+
+        if (showTopBar) {
         TopAppBar(
             title = { Text("MotionCanvas") },
             actions = {
@@ -994,7 +1015,9 @@ fun MotionCanvasApp() {
                 }) { Text("Redo") }
             }
         )
+        }
 
+        if (showToolBar) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             FilterChip(tool == Tool.BRUSH, { tool = Tool.BRUSH }, label = { Text("Brush") })
             FilterChip(tool == Tool.ERASER, { tool = Tool.ERASER }, label = { Text("Eraser") })
@@ -1012,7 +1035,21 @@ fun MotionCanvasApp() {
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
         }
 
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        }
+
+        if (showInspector) {
+            Surface(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 3.dp), color = Color(0xFF202020)) {
+                Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Inspector", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    Text("Layer $" + (selectedLayer + 1), color = Color.LightGray)
+                    Text("Frame $" + (frameIndex + 1) + "/" + frameData.size, color = Color.LightGray)
+                    Text("Zoom $" + (scale * 100).toInt() + "%", color = Color.LightGray)
+                    Text("Rotation $" + rotation.toInt() + "°", color = Color.LightGray)
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Size " + width.toInt(), Modifier.width(70.dp))
             Slider(width, { width = it }, valueRange = 1f..80f)
             Text("Opacity " + (opacity * 100).toInt() + "%", Modifier.width(95.dp))
@@ -1362,7 +1399,7 @@ fun MotionCanvasApp() {
                 }
             }
 
-            Surface(Modifier.width(132.dp).fillMaxHeight(), tonalElevation = 3.dp) {
+            if (showLayersPanel) Surface(Modifier.width(156.dp).fillMaxHeight(), tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxSize()) {
                     Text("Layers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(10.dp))
                     LazyColumn(Modifier.weight(1f)) {
@@ -1390,6 +1427,7 @@ fun MotionCanvasApp() {
             }
         }
 
+        if (showTimeline) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 5.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Button(onClick = { transformSelection(1f, 0f, Offset(-10f, 0f)) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("←") }
             Button(onClick = { transformSelection(1f, 0f, Offset(10f, 0f)) }, enabled = selectedStrokeIds.isNotEmpty()) { Text("→") }
@@ -1431,6 +1469,7 @@ fun MotionCanvasApp() {
             Button(onClick = ::addFrame) { Text("+ Frame") }
             Button(onClick = ::duplicateFrame) { Text("Duplicate") }
             Button(onClick = ::deleteFrame, enabled = frameData.size > 1) { Text("Delete") }
+        }
         }
     }
 }
