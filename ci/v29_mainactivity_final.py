@@ -86,6 +86,28 @@ topbar = '''    Scaffold(
         },
 '''
 s = s[:scaffold] + topbar + s[bottom_bar:]
+# Final source-level repair: normalize the malformed Brush Presets IconButton.
+import re
+s, n_toolbar = re.subn(
+    r'if \(workspaceVisibility\.brushPresetsWidget\)\s*\{\s*IconButton\(\s*onClick = \{ showBrushPresets = true \}\s*\)\s*,\s*modifier = Modifier\.background\(Color\.Transparent, CircleShape\)\s*\)\s*\{',
+    '''if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true },
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {''',
+    s,
+    count=1,
+)
+# Remove the extra top-level brace immediately before the next composable.
+s = re.sub(
+    r'\n\s*\}\s*\n\s*\}\s*\n\s*\n@Composable\s*\nfun OnionSkinSettingsDialog',
+    '\n    }\n\n\n@Composable\nfun OnionSkinSettingsDialog',
+    s,
+    count=1,
+)
+if n_toolbar == 0:
+    print("WARNING: Brush Presets malformed fragment was not found")
+
 
 # Deterministic cleanup of malformed source fragments after scaffold replacement.
 bad1 = """                if (workspaceVisibility.brushPresetsWidget) {
