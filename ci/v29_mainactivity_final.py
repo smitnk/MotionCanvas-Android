@@ -16,6 +16,30 @@ for imp in [
         lines.insert(insert_at, imp)
         s = "\n".join(lines) + ("\n" if s.endswith("\n") else "")
 
+# Repair malformed toolbar snippets introduced by the compatibility patch.
+s = s.replace('''                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true }
+                ),
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {''','''                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true },
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {''',1)
+
+# Remove the extra closing brace immediately before OnionSkinSettingsDialog.
+s = s.replace('''    }
+    }
+
+
+@Composable
+fun OnionSkinSettingsDialog(''','''    }
+
+
+@Composable
+fun OnionSkinSettingsDialog(''',1)
+
 s = s.replace("\nfun EditorScreen(\n", "\n@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(\n", 1)
 if "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(" not in s:
     s = s.replace("@Composable\nfun EditorScreen(", "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(", 1)
