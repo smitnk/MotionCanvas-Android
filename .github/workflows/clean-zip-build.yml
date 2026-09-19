@@ -34,6 +34,13 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Apply build-only Media3 compatibility fix
+        working-directory: build-source
+        run: |
+          sed -i 's/androidx.media3:media3-transformer:1.11.1/androidx.media3:media3-transformer:1.4.1/' app/build.gradle.kts
+          sed -i 's/androidx.media3:media3-common:1.11.1/androidx.media3:media3-common:1.4.1/' app/build.gradle.kts
+          grep 'androidx.media3' app/build.gradle.kts
+
       - name: Build clean V29 APK
         working-directory: build-source
         run: |
