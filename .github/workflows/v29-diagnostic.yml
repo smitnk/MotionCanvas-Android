@@ -1,0 +1,21 @@
+name: V29 CI Diagnostic
+
+on:
+  push:
+    branches:
+      - "feature/v29-clean-restart"
+  workflow_dispatch:
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Environment
+        run: |
+          echo "GitHub Actions runner started"
+          echo "Branch: $GITHUB_REF"
+          echo "Commit: $GITHUB_SHA"
+          test -f MotionCanvas-v29-restart-clean.zip
+          unzip -l MotionCanvas-v29-restart-clean.zip | head -40
