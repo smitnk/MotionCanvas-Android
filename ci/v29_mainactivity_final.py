@@ -2,7 +2,7 @@ from pathlib import Path
 
 p = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/MainActivity.kt")
 s = p.read_text()
-\n# Generated V29 contains Material3 experimental APIs across multiple top-level dialogs.
+# Generated V29 contains Material3 experimental APIs across multiple top-level dialogs.
 # Opt in at file scope so every generated composable compiles consistently.
 if "file:OptIn(ExperimentalMaterial3Api::class)" not in s:
     s = s.replace("package com.smitnk.motioncanvas\n", "package com.smitnk.motioncanvas\n\n@file:OptIn(ExperimentalMaterial3Api::class)\n", 1)
