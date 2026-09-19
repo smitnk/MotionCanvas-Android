@@ -87,6 +87,34 @@ topbar = '''    Scaffold(
 '''
 s = s[:scaffold] + topbar + s[bottom_bar:]
 
+# IMPORTANT: cleanup must run AFTER scaffold replacement because that replacement
+# recreates these two malformed fragments.
+bad_toolbar = """                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true }
+                ),
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {"""
+good_toolbar = """                if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true },
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {"""
+s = s.replace(bad_toolbar, good_toolbar, 1)
+
+bad_brace = """    }
+    }
+
+
+@Composable
+fun OnionSkinSettingsDialog"""
+good_brace = """    }
+
+
+@Composable
+fun OnionSkinSettingsDialog"""
+s = s.replace(bad_brace, good_brace, 1)
+
 # Deterministic cleanup of malformed source fragments after scaffold replacement.
 bad1 = """                if (workspaceVisibility.brushPresetsWidget) {
                 IconButton(
