@@ -38,6 +38,9 @@ jobs:
       - name: Apply V29 compatibility patch
         run: python3 ci/v29_patch.py
 
+      - name: Apply final MainActivity syntax repair
+        run: python3 ci/v29_mainactivity_final.py
+
       - name: Apply Media3 compatibility patch
         run: python3 ci/v29_media3_fix.py
 
