@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - "feature/v29-build-validation"
+  pull_request:
+    branches:
+      - "main"
 
 jobs:
   build:
