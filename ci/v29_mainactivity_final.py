@@ -16,14 +16,6 @@ for imp in [
         lines.insert(insert_at, imp)
         s = "\n".join(lines) + ("\n" if s.endswith("\n") else "")
 
-lines = s.splitlines()
-        pkg = next((i for i, line in enumerate(lines) if line.startswith("package ")), -1)
-        insert_at = pkg + 1
-        while insert_at < len(lines) and (lines[insert_at].startswith("import ") or lines[insert_at].strip() == ""):
-            insert_at += 1
-        lines.insert(insert_at, imp)
-        s = "\n".join(lines) + ("\n" if s.endswith("\n") else "")
-
 # Repair malformed toolbar snippets introduced by the compatibility patch.
 s = s.replace('''                if (workspaceVisibility.brushPresetsWidget) {
                 IconButton(
@@ -52,7 +44,7 @@ s = s.replace("\nfun EditorScreen(\n", "\n@OptIn(ExperimentalMaterial3Api::class
 if "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(" not in s:
     s = s.replace("@Composable\nfun EditorScreen(", "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(", 1)
 
-editor = s.index("@Composable\nfun EditorScreen(")
+editor = s.index("fun EditorScreen(")
 scaffold = s.index("    Scaffold(\n", editor)
 bottom_bar = s.index("        bottomBar = {", scaffold)
 
