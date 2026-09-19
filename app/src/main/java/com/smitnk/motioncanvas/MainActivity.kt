@@ -58,6 +58,9 @@ import java.util.concurrent.TimeUnit
 import com.squareup.gifencoder.GifEncoder
 import com.smitnk.motioncanvas.brush.TextureBrushEngine
 import com.smitnk.motioncanvas.brush.AdvancedBrushEngine
+import com.smitnk.motioncanvas.animation.TweenEngine
+import com.smitnk.motioncanvas.animation.TweenEasing
+import com.smitnk.motioncanvas.animation.MotionGuide
 import com.squareup.gifencoder.ImageOptions
 
 data class Stroke(
@@ -211,6 +214,11 @@ fun MotionCanvasApp() {
     var frameIndex by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf("") }
+    var showTweenDialog by remember { mutableStateOf(false) }
+    var tweenCount by remember { mutableIntStateOf(4) }
+    var tweenEasing by remember { mutableStateOf(TweenEasing.EASE_IN_OUT) }
+    var motionGuideMode by remember { mutableStateOf(false) }
+    var motionGuide by remember { mutableStateOf(MotionGuide()) }
     val context = LocalContext.current
 
     fun artScale(): Float {
@@ -981,6 +989,41 @@ fun MotionCanvasApp() {
         }?.let { brush = it.color }
     }
 
+    if (showTweenDialog) {
+        AlertDialog(
+            onDismissRequest = { showTweenDialog = false },
+            title = { Text("Create In-Between Frames") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Generate smooth in-betweens between the current frame and the next frame.")
+                    Text("Frames: ${tweenCount}")
+                    Slider(tweenCount.toFloat(), { tweenCount = it.toInt().coerceIn(1, 12) }, valueRange = 1f..12f, steps = 11)
+                    Text("Easing: ${tweenEasing.name}")
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TweenEasing.entries.forEach { easing ->
+                            FilterChip(tweenEasing == easing, { tweenEasing = easing }, label = { Text(easing.name) })
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val next = frameIndex + 1
+                    if (next < frameData.size) {
+                        val a = frameData[frameIndex]
+                        val b = frameData[next]
+                        val generated = (1..tweenCount).map { i ->
+                            TweenEngine.interpolate(a, b, i.toFloat() / (tweenCount + 1f), tweenEasing)
+                        }
+                        frameData = frameData.toMutableList().also { list -> list.addAll(next, generated) }
+                        showTweenDialog = false
+                    }
+                }, enabled = frameIndex + 1 < frameData.size) { Text("Generate") }
+            },
+            dismissButton = { TextButton(onClick = { showTweenDialog = false }) { Text("Cancel") } }
+        )
+    }
+
     if (showColorPicker) {
         AlertDialog(
             onDismissRequest = { showColorPicker = false },
@@ -1066,6 +1109,11 @@ fun MotionCanvasApp() {
             FilterChip(brushType == "Texture", { brushType = "Texture" }, label = { Text("Texture") })
             FilterChip(brushType == "Advanced", { brushType = "Advanced" }, label = { Text("Advanced") })
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
+            FilterChip(showTweenDialog, { showTweenDialog = true }, label = { Text("Tween") })
+            FilterChip(motionGuideMode, { motionGuideMode = !motionGuideMode; if (motionGuideMode) current = emptyList() }, label = { Text("Motion Guide") })
+            if (motionGuide.points.isNotEmpty()) {
+                TextButton(onClick = { motionGuide = MotionGuide() }) { Text("Clear Guide") }
+            }
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1202,7 +1250,9 @@ fun MotionCanvasApp() {
                         detectDragGestures(
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
-                                if (editStrokeIndex != null) {
+                                if (motionGuideMode) {
+                                    current = listOf(artStart)
+                                } else if (editStrokeIndex != null) {
                                     if (rigMode) {
                                             var nearest = -1
                                             var bd = 42f * 42f
@@ -1248,7 +1298,9 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (rigMode && rigSelected >= 0) {
+                                if (motionGuideMode) {
+                                    current = current + artPoint
+                                } else if (rigMode && rigSelected >= 0) {
                                     moveRigJoint(rigSelected, artPoint)
                                 } else if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
                                     updateBezierHandle(artPoint, activeHandleSide)
@@ -1273,7 +1325,10 @@ fun MotionCanvasApp() {
                                 }
                             },
                             onDragEnd = {
-                                if (editStrokeIndex != null) {
+                                if (motionGuideMode) {
+                                    motionGuide = MotionGuide(current.toList())
+                                    current = emptyList()
+                                } else if (editStrokeIndex != null) {
                                     saveFrame()
                                     activeHandle = -1
                                     editNodeIndex = -1
@@ -1326,6 +1381,15 @@ fun MotionCanvasApp() {
                     val composed = composeVisibleLayers()
                     drawImage(composed.asImageBitmap())
                     composed.recycle()
+
+                    if (motionGuide.visible && motionGuide.points.size > 1) {
+                        val guidePath = Path().apply {
+                            moveTo(motionGuide.points.first().x, motionGuide.points.first().y)
+                            motionGuide.points.drop(1).forEach { lineTo(it.x, it.y) }
+                        }
+                        drawPath(guidePath, Color.Cyan.copy(alpha = 0.8f), style = androidx.compose.ui.graphics.drawscope.Stroke(5f))
+                        motionGuide.points.forEach { drawCircle(Color.Cyan, 5f, it) }
+                    }
 
                     if (weightPaintMode && editStrokeIndex != null) {
                         ensureWeightJoints()
