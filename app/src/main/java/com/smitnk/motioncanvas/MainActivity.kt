@@ -56,6 +56,11 @@ import kotlin.math.max
 import kotlin.math.sin
 import java.util.concurrent.TimeUnit
 import com.squareup.gifencoder.GifEncoder
+import com.smitnk.motioncanvas.brush.TextureBrushEngine
+import com.smitnk.motioncanvas.brush.AdvancedBrushEngine
+import com.smitnk.motioncanvas.animation.TweenEngine
+import com.smitnk.motioncanvas.animation.TweenEasing
+import com.smitnk.motioncanvas.animation.MotionGuide
 import com.squareup.gifencoder.ImageOptions
 
 data class Stroke(
@@ -69,7 +74,15 @@ data class Stroke(
     val closed: Boolean = false,
     val filled: Boolean = false
 )
-data class ArtLayer(val name: String, val visible: Boolean = true, val opacity: Float = 1f, val clipToBelow: Boolean = false)
+enum class LayerBlendMode { NORMAL, MULTIPLY, SCREEN, OVERLAY, ADD }
+
+data class ArtLayer(
+    val name: String,
+    val visible: Boolean = true,
+    val opacity: Float = 1f,
+    val clipToBelow: Boolean = false,
+    val blendMode: LayerBlendMode = LayerBlendMode.NORMAL
+)
 data class LayerFrame(val strokes: List<Stroke> = emptyList(), val hold: Int = 1)
 data class Frame(val layers: List<LayerFrame> = emptyList())
 enum class Tool { BRUSH, ERASER, LINE, RECTANGLE, ELLIPSE, SELECT, FILL, EYEDROPPER }
@@ -146,6 +159,9 @@ fun MotionCanvasApp() {
     var stabilization by remember { mutableFloatStateOf(0.35f) }
     var streamline by remember { mutableFloatStateOf(0.35f) }
     var deepBrushEngine by remember { mutableStateOf(true) }
+    var textureAmount by remember { mutableFloatStateOf(0.55f) }
+    var advancedScatter by remember { mutableFloatStateOf(0.18f) }
+    var advancedAngleJitter by remember { mutableFloatStateOf(0.15f) }
     var quickShape by remember { mutableStateOf(true) }
     var editStrokeIndex by remember { mutableStateOf<Int?>(null) }
     var editNodeIndex by remember { mutableIntStateOf(-1) }
@@ -198,6 +214,11 @@ fun MotionCanvasApp() {
     var frameIndex by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
     var exportStatus by remember { mutableStateOf("") }
+    var showTweenDialog by remember { mutableStateOf(false) }
+    var tweenCount by remember { mutableIntStateOf(4) }
+    var tweenEasing by remember { mutableStateOf(TweenEasing.EASE_IN_OUT) }
+    var motionGuideMode by remember { mutableStateOf(false) }
+    var motionGuide by remember { mutableStateOf(MotionGuide()) }
     val context = LocalContext.current
 
     fun artScale(): Float {
@@ -268,17 +289,52 @@ fun MotionCanvasApp() {
             rasterFrames = loaded; frameData = List(count) { Frame(layers.map { LayerFrame() }) }; loadFrame(0); exportStatus = "Project loaded"
         } catch (e: Exception) { exportStatus = "Load failed" }
     }
+    fun blendPorterDuff(mode: LayerBlendMode): PorterDuff.Mode? = when (mode) {
+        LayerBlendMode.NORMAL -> null
+        LayerBlendMode.MULTIPLY -> PorterDuff.Mode.MULTIPLY
+        LayerBlendMode.SCREEN -> PorterDuff.Mode.SCREEN
+        LayerBlendMode.OVERLAY -> PorterDuff.Mode.OVERLAY
+        LayerBlendMode.ADD -> PorterDuff.Mode.ADD
+    }
+
+    fun composeVisibleLayers(): Bitmap {
+        val output = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
+        val canvas = AndroidCanvas(output)
+        canvas.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        rasterLayers.forEachIndexed { i, source ->
+            val layer = layers.getOrNull(i) ?: return@forEachIndexed
+            if (!layer.visible || source.isRecycled) return@forEachIndexed
+            var drawable = source
+            var temporary: Bitmap? = null
+            if (layer.clipToBelow && i > 0) {
+                val below = rasterLayers.getOrNull(i - 1)
+                if (below != null && !below.isRecycled) {
+                    temporary = source.copy(Bitmap.Config.ARGB_8888, true)
+                    val maskCanvas = AndroidCanvas(temporary)
+                    val maskPaint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+                    maskPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                    maskCanvas.drawBitmap(below, 0f, 0f, maskPaint)
+                    maskPaint.xfermode = null
+                    drawable = temporary
+                }
+            }
+            val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG or AndroidPaint.DITHER_FLAG)
+            paint.alpha = (layer.opacity.coerceIn(0f, 1f) * 255f).toInt()
+            blendPorterDuff(layer.blendMode)?.let { paint.xfermode = PorterDuffXfermode(it) }
+            canvas.drawBitmap(drawable, 0f, 0f, paint)
+            paint.xfermode = null
+            temporary?.recycle()
+        }
+        return output
+    }
+
     fun exportCurrentPng() {
         val merged = Bitmap.createBitmap(rasterWidth, rasterHeight, Bitmap.Config.ARGB_8888)
         val canvas = AndroidCanvas(merged)
         canvas.drawColor(android.graphics.Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR)
-        rasterLayers.forEachIndexed { i, bitmap ->
-            if (layers.getOrNull(i)?.visible == true) {
-                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
-                paint.alpha = (layers[i].opacity.coerceIn(0f, 1f) * 255f).toInt()
-                canvas.drawBitmap(bitmap, 0f, 0f, paint)
-            }
-        }
+        val composed = composeVisibleLayers()
+        canvas.drawBitmap(composed, 0f, 0f, null)
+        composed.recycle()
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "MotionCanvas_F${frameIndex + 1}.png")
             put(MediaStore.Images.Media.MIME_TYPE, "image/png")
@@ -674,6 +730,11 @@ fun MotionCanvasApp() {
                 paint.strokeCap = AndroidPaint.Cap.ROUND
                 paint.strokeJoin = AndroidPaint.Join.ROUND
                 if (tool == Tool.ERASER) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                if (tool == Tool.BRUSH && brushType == "Texture") {
+                    TextureBrushEngine.draw(bitmap, points, brush.toArgb(), paint.strokeWidth, opacity, textureAmount)
+                } else if (tool == Tool.BRUSH && brushType == "Advanced") {
+                    AdvancedBrushEngine.draw(bitmap, points, currentPressures, brush.toArgb(), paint.strokeWidth, opacity, spacing, advancedScatter, advancedAngleJitter)
+                } else {
                 val path = android.graphics.Path()
                 path.moveTo(points.first().x, points.first().y)
                 points.drop(1).forEach { path.lineTo(it.x, it.y) }
@@ -689,6 +750,7 @@ fun MotionCanvasApp() {
                     }
                 } else {
                     androidCanvas.drawPath(path, paint)
+                }
                 }
                 rasterLayers = rasterLayers.toMutableList().also { it[selectedLayer] = bitmap }
                 saveRasterFrame()
@@ -927,6 +989,41 @@ fun MotionCanvasApp() {
         }?.let { brush = it.color }
     }
 
+    if (showTweenDialog) {
+        AlertDialog(
+            onDismissRequest = { showTweenDialog = false },
+            title = { Text("Create In-Between Frames") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Generate smooth in-betweens between the current frame and the next frame.")
+                    Text("Frames: ${tweenCount}")
+                    Slider(tweenCount.toFloat(), { tweenCount = it.toInt().coerceIn(1, 12) }, valueRange = 1f..12f, steps = 11)
+                    Text("Easing: ${tweenEasing.name}")
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TweenEasing.entries.forEach { easing ->
+                            FilterChip(tweenEasing == easing, { tweenEasing = easing }, label = { Text(easing.name) })
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val next = frameIndex + 1
+                    if (next < frameData.size) {
+                        val a = frameData[frameIndex]
+                        val b = frameData[next]
+                        val generated = (1..tweenCount).map { i ->
+                            TweenEngine.interpolate(a, b, i.toFloat() / (tweenCount + 1f), tweenEasing)
+                        }
+                        frameData = frameData.toMutableList().also { list -> list.addAll(next, generated) }
+                        showTweenDialog = false
+                    }
+                }, enabled = frameIndex + 1 < frameData.size) { Text("Generate") }
+            },
+            dismissButton = { TextButton(onClick = { showTweenDialog = false }) { Text("Cancel") } }
+        )
+    }
+
     if (showColorPicker) {
         AlertDialog(
             onDismissRequest = { showColorPicker = false },
@@ -1009,7 +1106,14 @@ fun MotionCanvasApp() {
             FilterChip(brushType == "Pen", { brushType = "Pen" }, label = { Text("Pen") })
             FilterChip(brushType == "Marker", { brushType = "Marker" }, label = { Text("Marker") })
             FilterChip(brushType == "Airbrush", { brushType = "Airbrush" }, label = { Text("Airbrush") })
+            FilterChip(brushType == "Texture", { brushType = "Texture" }, label = { Text("Texture") })
+            FilterChip(brushType == "Advanced", { brushType = "Advanced" }, label = { Text("Advanced") })
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
+            FilterChip(showTweenDialog, { showTweenDialog = true }, label = { Text("Tween") })
+            FilterChip(motionGuideMode, { motionGuideMode = !motionGuideMode; if (motionGuideMode) current = emptyList() }, label = { Text("Motion Guide") })
+            if (motionGuide.points.isNotEmpty()) {
+                TextButton(onClick = { motionGuide = MotionGuide() }) { Text("Clear Guide") }
+            }
         }
 
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1057,6 +1161,21 @@ fun MotionCanvasApp() {
             Text("Streamline", Modifier.width(75.dp))
             Slider(streamline, { streamline = it }, valueRange = 0f..0.9f)
             Text((streamline * 100).toInt().toString() + "%")
+        }
+        if (brushType == "Texture") {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Texture", Modifier.width(70.dp))
+                Slider(textureAmount, { textureAmount = it }, valueRange = 0f..1f)
+                Text((textureAmount * 100).toInt().toString() + "%")
+            }
+        }
+        if (brushType == "Advanced") {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Scatter", Modifier.width(70.dp)); Slider(advancedScatter, { advancedScatter = it }, valueRange = 0f..1f); Text((advancedScatter * 100).toInt().toString() + "%")
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Angle", Modifier.width(70.dp)); Slider(advancedAngleJitter, { advancedAngleJitter = it }, valueRange = 0f..1f); Text((advancedAngleJitter * 100).toInt().toString() + "%")
+            }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(deepBrushEngine, { deepBrushEngine = !deepBrushEngine }, label = { Text("Deep Brush") })
@@ -1131,7 +1250,9 @@ fun MotionCanvasApp() {
                         detectDragGestures(
                             onDragStart = { start ->
                                 val artStart = screenToArt(start)
-                                if (editStrokeIndex != null) {
+                                if (motionGuideMode) {
+                                    current = listOf(artStart)
+                                } else if (editStrokeIndex != null) {
                                     if (rigMode) {
                                             var nearest = -1
                                             var bd = 42f * 42f
@@ -1177,7 +1298,9 @@ fun MotionCanvasApp() {
                             },
                             onDrag = { change, _ ->
                                 val artPoint = screenToArt(change.position)
-                                if (rigMode && rigSelected >= 0) {
+                                if (motionGuideMode) {
+                                    current = current + artPoint
+                                } else if (rigMode && rigSelected >= 0) {
                                     moveRigJoint(rigSelected, artPoint)
                                 } else if (editStrokeIndex != null && nodeEditorMode && bezierHandleMode && activeHandle >= 0) {
                                     updateBezierHandle(artPoint, activeHandleSide)
@@ -1202,7 +1325,10 @@ fun MotionCanvasApp() {
                                 }
                             },
                             onDragEnd = {
-                                if (editStrokeIndex != null) {
+                                if (motionGuideMode) {
+                                    motionGuide = MotionGuide(current.toList())
+                                    current = emptyList()
+                                } else if (editStrokeIndex != null) {
                                     saveFrame()
                                     activeHandle = -1
                                     editNodeIndex = -1
@@ -1252,10 +1378,17 @@ fun MotionCanvasApp() {
                         }
                     }
 
-                    rasterLayers.forEachIndexed { index, bitmap ->
-                        if (layers.getOrNull(index)?.visible == true) {
-                            drawImage(bitmap.asImageBitmap())
+                    val composed = composeVisibleLayers()
+                    drawImage(composed.asImageBitmap())
+                    composed.recycle()
+
+                    if (motionGuide.visible && motionGuide.points.size > 1) {
+                        val guidePath = Path().apply {
+                            moveTo(motionGuide.points.first().x, motionGuide.points.first().y)
+                            motionGuide.points.drop(1).forEach { lineTo(it.x, it.y) }
                         }
+                        drawPath(guidePath, Color.Cyan.copy(alpha = 0.8f), style = androidx.compose.ui.graphics.drawscope.Stroke(5f))
+                        motionGuide.points.forEach { drawCircle(Color.Cyan, 5f, it) }
                     }
 
                     if (weightPaintMode && editStrokeIndex != null) {
@@ -1365,6 +1498,7 @@ fun MotionCanvasApp() {
             Surface(Modifier.width(132.dp).fillMaxHeight(), tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxSize()) {
                     Text("Layers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(10.dp))
+            Text("Clip = alpha mask • B = blend", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 10.dp))
                     LazyColumn(Modifier.weight(1f)) {
                         itemsIndexed(layers) { index, layer ->
                             Surface(
@@ -1375,9 +1509,21 @@ fun MotionCanvasApp() {
                                     Text(if (layer.visible) "◉" else "○", Modifier.clickable { toggleLayerVisibility(index) }.padding(4.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(layer.name)
-                                        Text(if (currentStrokes.getOrNull(index)?.isNotEmpty() == true) "Content" else "Empty",
+                                        Text((if (layer.clipToBelow) "Clip • " else "") + layer.blendMode.name,
                                             style = MaterialTheme.typography.labelSmall)
                                     }
+                                    Button(onClick = {
+                                        layers = layers.toMutableList().also {
+                                            it[index] = it[index].copy(clipToBelow = !it[index].clipToBelow)
+                                        }
+                                    }, enabled = index > 0) { Text(if (layer.clipToBelow) "Unclip" else "Clip") }
+                                    Button(onClick = {
+                                        val modes = LayerBlendMode.entries
+                                        val next = modes[(modes.indexOf(layer.blendMode) + 1) % modes.size]
+                                        layers = layers.toMutableList().also {
+                                            it[index] = it[index].copy(blendMode = next)
+                                        }
+                                    }) { Text("B") }
                                 }
                             }
                         }
