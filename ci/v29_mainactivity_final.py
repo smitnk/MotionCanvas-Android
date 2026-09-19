@@ -308,5 +308,77 @@ s = s.replace("@file:OptIn(ExperimentalMaterial3Api::class)\n", "")
 if "package com.smitnk.motioncanvas" in s:
     s = s.replace("package com.smitnk.motioncanvas\n", "@file:OptIn(ExperimentalMaterial3Api::class)\npackage com.smitnk.motioncanvas\n", 1)
 
+# Canvas runtime repair: keep committed strokes in the rendered frame and show a live preview.
+shape_block = '''                                    history.addStroke(
+                                        DrawStroke(
+                                            points = generated.map { DrawPoint(it.x, it.y, 1f) },
+                                            color = color,
+                                            strokeWidth = size,
+                                            alpha = color.alpha
+                                        )
+                                    )
+                                    currentDrawingPoints.clear()
+                                    shapeStart = null'''
+shape_fixed = '''                                    history.addStroke(
+                                        DrawStroke(
+                                            points = generated.map { DrawPoint(it.x, it.y, 1f) },
+                                            color = color,
+                                            strokeWidth = size,
+                                            alpha = color.alpha
+                                        )
+                                    )
+                                    history.strokes.lastOrNull()?.let { stroke ->
+                                        if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)
+                                    }
+                                    currentDrawingPoints.clear()
+                                    shapeStart = null'''
+s = s.replace(shape_block, shape_fixed, 1)
+brush_block = '''                                    history.addStroke(
+                                        DrawStroke(
+                                            points = currentDrawingPoints.toList(),
+                                            color = if (tool == ToolType.Eraser) project.backgroundColor else color,
+                                            strokeWidth = size,
+                                            alpha = color.alpha,
+                                            isEraser = tool == ToolType.Eraser,
+                                            layerIndex = 0,
+                                            textured = texturedBrush && tool == ToolType.Brush
+                                        )
+                                    )
+                                    currentDrawingPoints.clear()'''
+brush_fixed = '''                                    history.addStroke(
+                                        DrawStroke(
+                                            points = currentDrawingPoints.toList(),
+                                            color = if (tool == ToolType.Eraser) project.backgroundColor else color,
+                                            strokeWidth = size,
+                                            alpha = color.alpha,
+                                            isEraser = tool == ToolType.Eraser,
+                                            layerIndex = 0,
+                                            textured = texturedBrush && tool == ToolType.Brush
+                                        )
+                                    )
+                                    history.strokes.lastOrNull()?.let { stroke ->
+                                        if (currentFrame.strokes.none { it.id == stroke.id }) currentFrame.strokes.add(stroke)
+                                    }
+                                    currentDrawingPoints.clear()'''
+s = s.replace(brush_block, brush_fixed, 1)
+preview_marker = '''                            // Motion trails: persistent colored ghost strokes for trajectory reading.'''
+preview_code = '''                            // Live preview while the pointer is down.
+                            if (tool != ToolType.Select && tool != ToolType.Lasso && tool != ToolType.Eyedropper && currentDrawingPoints.size > 1) {
+                                val previewPath = OpenSourceStrokeSmoother.build(
+                                    OpenSourceDrawingEngine.smooth(currentDrawingPoints.map { Offset(it.x, it.y) })
+                                )
+                                drawPath(
+                                    previewPath,
+                                    if (tool == ToolType.Eraser) project.backgroundColor else color,
+                                    style = Stroke(
+                                        width = pressureAdjustedWidth(size, currentDrawingPoints),
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+
+                            // Motion trails: persistent colored ghost strokes for trajectory reading.'''
+s = s.replace(preview_marker, preview_code, 1)
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
