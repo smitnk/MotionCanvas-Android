@@ -448,9 +448,9 @@ live_overlay = """                            // Live drawing overlay (must be a
 
 """
 if "Live drawing overlay (must be after composed layer bitmap)." not in s:
-    marker2 = "drawImage(composedLayers.asImageBitmap())"
+    marker2 = "currentFrame.strokes.forEach { stroke ->"
     if marker2 in s:
-        s = s.replace(marker2, marker2 + "\n" + live_overlay, 1)
+        s = s.replace(marker2, live_overlay + marker2, 1)
 s = re.sub(r'(\bbrushPresetsWidget\s*=\s*)false\b', r'\1true', s, count=1)
 
 p.write_text(s)
