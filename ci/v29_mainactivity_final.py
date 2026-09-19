@@ -1,62 +1,57 @@
 from pathlib import Path
-import re
 
 p = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/MainActivity.kt")
 s = p.read_text()
 
-# Keep the existing editor implementation, but make the generated V29 source
-# structurally valid after the workspace-visibility patch has been applied.
-s = s.replace("\nfun EditorScreen(\n", "\n@Composable\nfun EditorScreen(\n", 1)
-
-# Repair the malformed IconButton calls produced by the older visibility edit.
-s = s.replace(
-    'IconButton(onClick = { imagePicker.launch("image/*") }\n                    }) {',
-    'IconButton(onClick = { imagePicker.launch("image/*") }) {'
-)
-s = s.replace(
-    'IconButton(onClick = { showFrameTools = true }\n                    }) {',
-    'IconButton(onClick = { showFrameTools = true }) {'
-)
-s = s.replace(
-    'IconButton(onClick = { showAudioDialog = true }\n                    }) {',
-    'IconButton(onClick = { showAudioDialog = true }) {'
-)
-s = s.replace(
-    'IconButton(onClick = { showAdvancedPanel = true }\n                    }) {',
-    'IconButton(onClick = { showAdvancedPanel = true }) {'
-)
-s = s.replace(
-    'IconButton(onClick = { showProTools = true }\n                    }) {',
-    'IconButton(onClick = { showProTools = true }) {'
-)
-
-# A previous edit left the modifier outside IconButton's argument list.
-s = s.replace(
-    '''IconButton(
-                    onClick = { showBrushPresets = true }
-                ),
-                    modifier = Modifier.background(Color.Transparent, CircleShape)
-                ) {''',
-    '''IconButton(
-                    onClick = { showBrushPresets = true },
-                    modifier = Modifier.background(Color.Transparent, CircleShape)
-                ) {'''
-)
-
-# Remove an unmatched workspace-visibility wrapper if it is still present in
-# the generated top bar. The visibility checks themselves remain intact.
-s = s.replace(
-    '''        topBar = {
-            if (workspaceVisibility.topBar) {
-            TopAppBar(''',
-    '''        topBar = {
-            TopAppBar(''', 1
-)
-
-# Compose Material3 APIs used by the unchanged MotionCanvas UI are experimental
-# with the pinned Compose BOM; opt in rather than removing those controls.
-if "@OptIn(ExperimentalMaterial3Api::class)" not in s:
+# The clean V29 source contains the complete editor implementation. Repair only
+# the generated editor declaration and the malformed Scaffold top-bar region.
+s = s.replace("\nfun EditorScreen(\n", "\n@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(\n", 1)
+if "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(" not in s:
     s = s.replace("@Composable\nfun EditorScreen(", "@OptIn(ExperimentalMaterial3Api::class)\n@Composable\nfun EditorScreen(", 1)
 
+editor = s.index("@Composable\nfun EditorScreen(")
+scaffold = s.index("    Scaffold(\n", editor)
+bottom_bar = s.index("        bottomBar = {", scaffold)
+
+# Keep every existing workspace action, but place them in one balanced
+# TopAppBar/actions scope. This fixes the prior visibility-edit brace damage.
+topbar = '''    Scaffold(
+        containerColor = AppBackground,
+        topBar = {
+            if (workspaceVisibility.topBar) {
+                TopAppBar(
+                    title = { Text(project.name, color = White, fontSize = 16.sp) },
+                    navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = White) } },
+                    actions = {
+                        IconButton(onClick = { zoomPanState.zoomOut() }) { Icon(Icons.Default.ZoomOut, "Zoom out", tint = White) }
+                        TextButton(onClick = { zoomPanState.reset() }) { Text("${zoomPanState.zoomPercent}%", color = if (zoomPanState.zoom != 1f || zoomPanState.pan != Offset.Zero) PinkAccent else White, fontSize = 12.sp) }
+                        IconButton(onClick = { zoomPanState.zoomIn() }) { Icon(Icons.Default.ZoomIn, "Zoom in", tint = White) }
+                        if (zoomPanState.zoom != 1f || zoomPanState.pan != Offset.Zero) {
+                            IconButton(onClick = { zoomPanState.reset() }) { Icon(Icons.Default.RestartAlt, "Reset view", tint = PinkAccent) }
+                        }
+                        IconButton(onClick = { onionSkinState.toggle() }) { Icon(Icons.Default.Layers, "Toggle onion skin", tint = if (onionSkinState.enabled) PinkAccent else White) }
+                        IconButton(onClick = { showOnionDialog = true }) { Icon(Icons.Default.Tune, "Onion skin settings", tint = White) }
+                        IconButton(onClick = { history.undo() }, enabled = history.canUndo) { Icon(Icons.Default.Undo, "Undo", tint = White) }
+                        IconButton(onClick = { history.redo() }, enabled = history.canRedo) { Icon(Icons.Default.Redo, "Redo", tint = White) }
+                        IconButton(onClick = onOpenTimeline) { Icon(Icons.Default.ViewCarousel, "Timeline", tint = PinkAccent) }
+                        IconButton(onClick = onOpenLayers) { Icon(Icons.Default.Layers, "Layers", tint = White) }
+                        if (workspaceVisibility.referenceWidget) {
+                            IconButton(onClick = { imagePicker.launch("image/*") }) { Icon(Icons.Default.Image, "Reference image", tint = if (referenceBitmap != null) PinkAccent else White) }
+                            IconButton(onClick = { showReferenceDialog = true }) { Icon(Icons.Default.Tune, "Reference transform", tint = White) }
+                            FilterChip(selected = referenceEditMode, onClick = { if (referenceBitmap != null) referenceEditMode = !referenceEditMode }, label = { Text("Ref Edit") })
+                        }
+                        if (workspaceVisibility.frameToolsWidget) { IconButton(onClick = { showFrameTools = true }) { Icon(Icons.Default.Flag, "Frame tools", tint = White) } }
+                        if (workspaceVisibility.audioWidget) { IconButton(onClick = { showAudioDialog = true }) { Icon(Icons.Default.Mic, "Voice recording", tint = if (isRecording) PinkAccent else White) } }
+                        if (workspaceVisibility.advancedWidget) { IconButton(onClick = { showAdvancedPanel = true }) { Icon(Icons.Default.Tune, "Advanced tools", tint = White) } }
+                        if (workspaceVisibility.proToolsWidget) { IconButton(onClick = { showProTools = true }) { Icon(Icons.Default.AutoAwesome, "Pro tools", tint = PinkAccent) } }
+                        IconButton(onClick = onOpenMore) { Icon(Icons.Default.MoreVert, "More tools / widget visibility", tint = PinkAccent) }
+                        IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, "Settings", tint = White) }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = AppBackground)
+                )
+            }
+        },
+'''
+s = s[:scaffold] + topbar + s[bottom_bar:]
 p.write_text(s)
-print("V29 MainActivity targeted syntax repair applied")
+print("V29 MainActivity top-bar scope repair applied")
