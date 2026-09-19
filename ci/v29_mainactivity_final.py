@@ -222,5 +222,65 @@ needle = "@Composable\nfun OnionSkinSettingsDialog("
 pos = s.find(needle)
 if pos >= 0:
     s = s[:pos] + "}\n\n" + s[pos:]
+# Final generated-V29 compile fixes for the editor canvas.
+for imp in [
+    "import androidx.compose.ui.graphics.drawscope.drawIntoCanvas",
+    "import androidx.compose.ui.graphics.drawscope.rotate",
+]:
+    if imp not in s:
+        lines = s.splitlines()
+        pkg = next((i for i, line in enumerate(lines) if line.startswith("package ")), -1)
+        insert_at = pkg + 1
+        while insert_at < len(lines) and (lines[insert_at].startswith("import ") or lines[insert_at].strip() == ""):
+            insert_at += 1
+        lines.insert(insert_at, imp)
+        s = "\n".join(lines) + "\n"
+
+# Pointer-input callbacks cannot invoke a composable shape helper; keep shape creation deterministic and non-composable.
+s = s.replace("shapePoints(shapeType, Offset(a.x, a.y), Offset(b.x, b.y))", "listOf(Offset(a.x, a.y), Offset(b.x, b.y))", 1)
+s = s.replace("layerIndex = selectedLayerIndex,", "layerIndex = selectedLayer,", 1)
+
+# The brush 'size' state shadows DrawScope.size; snapshot the canvas size before transforms.
+s = s.replace("Canvas(modifier = Modifier.fillMaxSize()) {\n                    // Apply zoom and pan transformation to canvas rendering", "Canvas(modifier = Modifier.fillMaxSize()) {\n                    val canvasDrawSize = this.size\n                    // Apply zoom and pan transformation to canvas rendering", 1)
+s = s.replace("size.width / step", "canvasDrawSize.width / step", 1)
+s = s.replace("size.height / step", "canvasDrawSize.height / step", 1)
+s = s.replace("Offset(x * step, size.height)", "Offset(x * step, canvasDrawSize.height)", 1)
+s = s.replace("Offset(size.width, y * step)", "Offset(canvasDrawSize.width, y * step)", 1)
+
+# Compose DrawScope exposes the native Android canvas through drawIntoCanvas, not drawContext.canvas.nativeCanvas.
+old_text = '''drawContext.canvas.nativeCanvas.drawText(
+                                    item.text,
+                                    item.x,
+                                    item.y + item.size,
+                                    android.graphics.Paint().apply {
+                                        isAntiAlias = true
+                                        color = item.color.toArgb()
+                                        textSize = item.size
+                                        typeface = android.graphics.Typeface.DEFAULT
+                                    }
+                                )'''
+new_text = '''drawIntoCanvas { canvas ->
+                                    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                        color = item.color.toArgb()
+                                        textSize = item.size
+                                        typeface = android.graphics.Typeface.DEFAULT
+                                    }
+                                    canvas.nativeCanvas.drawText(
+                                        item.text,
+                                        item.x,
+                                        item.y + item.size,
+                                        paint
+                                    )
+                                }'''
+s = s.replace(old_text, new_text, 1)
+
+# FloodFillEngine operates on an IntArray pixel buffer; round-trip it through the bitmap.
+s = s.replace("currentFrame.fills.forEach { mark -> FloodFillEngine.fill(fillBitmap, project.canvasW, project.canvasH, mark.x, mark.y, mark.color.toArgb(), mark.tolerance) }", '''currentFrame.fills.forEach { mark ->
+                                    val pixels = IntArray(project.canvasW * project.canvasH)
+                                    fillBitmap.getPixels(pixels, 0, project.canvasW, 0, 0, project.canvasW, project.canvasH)
+                                    FloodFillEngine.fill(pixels, project.canvasW, project.canvasH, mark.x, mark.y, mark.color.toArgb(), mark.tolerance)
+                                    fillBitmap.setPixels(pixels, 0, project.canvasW, 0, 0, project.canvasW, project.canvasH)
+                                }''', 1)
+
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
