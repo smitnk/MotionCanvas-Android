@@ -430,7 +430,9 @@ s = s.replace(
     1
 )
 
+
 # Ensure live brush/lasso overlays are rendered after the composed bitmap.
+# Remove the earlier marker-based insertion because it could land inside the fill block.
 live_overlay = """                            // Live drawing overlay (must be after composed layer bitmap).
                             if (tool != ToolType.Select && tool != ToolType.Lasso && tool != ToolType.Eyedropper && currentDrawingPoints.size > 1) {
                                 val previewPath = OpenSourceStrokeSmoother.build(
@@ -459,11 +461,15 @@ live_overlay = """                            // Live drawing overlay (must be a
                             }
 
 """
-if "Live drawing overlay (must be after composed layer bitmap)." not in s:
-    marker2 = "currentFrame.strokes.forEach { s ->"
-    if marker2 in s:
-        s = s.replace(marker2, live_overlay + marker2, 1)
-s = re.sub(r'(\bbrushPresetsWidget\s*=\s*)false\b', r'\1true', s, count=1)
+# Remove any old copy from the generated source before reinserting.
+s = s.replace(live_overlay, "", 1)
+composite_marker = "drawImage(composedLayers.asImageBitmap())"
+if composite_marker not in s:
+    raise SystemExit("ERROR: composed bitmap marker not found")
+ci = s.find(composite_marker)
+line_end = s.find("\n", ci)
+s = s[:line_end + 1] + "\n" + live_overlay + s[line_end + 1:]
+s = s.replace("brushPresetsWidget = false", "brushPresetsWidget = true", 1)
 
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
