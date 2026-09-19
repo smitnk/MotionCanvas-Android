@@ -68,3 +68,5 @@ jobs:
         with:
           name: motioncanvas-v29-accurate-debug-apk
           path: build-source/app/build/outputs/apk/debug/*.apk
+
+# Trigger build after final V29 repair
