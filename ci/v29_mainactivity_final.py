@@ -93,5 +93,27 @@ for start, end in [(1460,1510),(2310,2340)]:
     for i in range(start, min(end, len(lines)) + 1):
         print(f"{i}: {lines[i-1]}")
 
+# Final deterministic cleanup after all earlier transformations.
+import re
+
+s = re.sub(
+    r'''if \(workspaceVisibility\\.brushPresetsWidget\) \{\\s*IconButton\(\\s*onClick = \{ showBrushPresets = true \}\\s*\),\\s*modifier = Modifier\\.background\(Color\\.Transparent, CircleShape\)\\s*\) \{''',
+    '''if (workspaceVisibility.brushPresetsWidget) {
+                IconButton(
+                    onClick = { showBrushPresets = true },
+                    modifier = Modifier.background(Color.Transparent, CircleShape)
+                ) {''',
+    s,
+    count=1,
+)
+
+s = re.sub(
+    r'''\n\}\n\n\}\n\n\n@Composable\nfun OnionSkinSettingsDialog''',
+    '''\n}\n\n@Composable
+fun OnionSkinSettingsDialog''',
+    s,
+    count=1,
+)
+
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
