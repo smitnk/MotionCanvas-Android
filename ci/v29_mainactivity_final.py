@@ -303,5 +303,10 @@ s = s.replace("currentFrame.fills.forEach { mark -> FloodFillEngine.fill(fillBit
                                     fillBitmap.setPixels(pixels, 0, project.canvasW, 0, 0, project.canvasW, project.canvasH)
                                 }''', 1)
 
+# Normalize Kotlin file annotation placement: file annotations must precede the package declaration.
+s = s.replace("@file:OptIn(ExperimentalMaterial3Api::class)\n", "")
+if "package com.smitnk.motioncanvas" in s:
+    s = s.replace("package com.smitnk.motioncanvas\n", "@file:OptIn(ExperimentalMaterial3Api::class)\npackage com.smitnk.motioncanvas\n", 1)
+
 p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
