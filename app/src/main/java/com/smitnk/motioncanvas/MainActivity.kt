@@ -56,6 +56,7 @@ import kotlin.math.max
 import kotlin.math.sin
 import java.util.concurrent.TimeUnit
 import com.squareup.gifencoder.GifEncoder
+import com.smitnk.motioncanvas.brush.TextureBrushEngine
 import com.squareup.gifencoder.ImageOptions
 
 data class Stroke(
@@ -154,6 +155,7 @@ fun MotionCanvasApp() {
     var stabilization by remember { mutableFloatStateOf(0.35f) }
     var streamline by remember { mutableFloatStateOf(0.35f) }
     var deepBrushEngine by remember { mutableStateOf(true) }
+    var textureAmount by remember { mutableFloatStateOf(0.55f) }
     var quickShape by remember { mutableStateOf(true) }
     var editStrokeIndex by remember { mutableStateOf<Int?>(null) }
     var editNodeIndex by remember { mutableIntStateOf(-1) }
@@ -717,6 +719,9 @@ fun MotionCanvasApp() {
                 paint.strokeCap = AndroidPaint.Cap.ROUND
                 paint.strokeJoin = AndroidPaint.Join.ROUND
                 if (tool == Tool.ERASER) paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                if (tool == Tool.BRUSH && brushType == "Texture") {
+                    TextureBrushEngine.draw(bitmap, points, brush.toArgb(), paint.strokeWidth, opacity, textureAmount)
+                } else {
                 val path = android.graphics.Path()
                 path.moveTo(points.first().x, points.first().y)
                 points.drop(1).forEach { path.lineTo(it.x, it.y) }
@@ -732,6 +737,7 @@ fun MotionCanvasApp() {
                     }
                 } else {
                     androidCanvas.drawPath(path, paint)
+                }
                 }
                 rasterLayers = rasterLayers.toMutableList().also { it[selectedLayer] = bitmap }
                 saveRasterFrame()
@@ -1052,6 +1058,7 @@ fun MotionCanvasApp() {
             FilterChip(brushType == "Pen", { brushType = "Pen" }, label = { Text("Pen") })
             FilterChip(brushType == "Marker", { brushType = "Marker" }, label = { Text("Marker") })
             FilterChip(brushType == "Airbrush", { brushType = "Airbrush" }, label = { Text("Airbrush") })
+            FilterChip(brushType == "Texture", { brushType = "Texture" }, label = { Text("Texture") })
             FilterChip(onionSkin, { onionSkin = !onionSkin }, label = { Text("Onion") })
         }
 
@@ -1100,6 +1107,13 @@ fun MotionCanvasApp() {
             Text("Streamline", Modifier.width(75.dp))
             Slider(streamline, { streamline = it }, valueRange = 0f..0.9f)
             Text((streamline * 100).toInt().toString() + "%")
+        }
+        if (brushType == "Texture") {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Texture", Modifier.width(70.dp))
+                Slider(textureAmount, { textureAmount = it }, valueRange = 0f..1f)
+                Text((textureAmount * 100).toInt().toString() + "%")
+            }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(deepBrushEngine, { deepBrushEngine = !deepBrushEngine }, label = { Text("Deep Brush") })
