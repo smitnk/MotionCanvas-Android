@@ -38,6 +38,14 @@ jobs:
       - name: Apply V29 compatibility patch
         run: python3 ci/v29_patch.py
 
+      - name: Apply Media3 compatibility patch
+        run: python3 ci/v29_media3_fix.py
+
+      - name: Validate patched source
+        run: |
+          grep -n 'media3' build-source/app/build.gradle.kts
+          ! grep -q 'androidx.media3:.*:1.11.1' build-source/app/build.gradle.kts
+
       - name: Validate patched source
         run: |
           test -f build-source/app/build.gradle.kts
