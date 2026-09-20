@@ -471,5 +471,118 @@ line_end = s.find("\n", ci)
 s = s[:line_end + 1] + "\n" + live_overlay + s[line_end + 1:]
 s = s.replace("brushPresetsWidget = false", "brushPresetsWidget = true", 1)
 
-\n# Insert the user's supplied OpenToonz stroke-engine code verbatim as a reusable Java engine.\nengine_path = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/drawing/OpenToonzStrokeEngine.java")\nengine_path.parent.mkdir(parents=True, exist_ok=True)\nengine_path.write_text(r'''package com.smitnk.motioncanvas.drawing;\n\nimport android.graphics.Path;\nimport java.util.ArrayList;\nimport java.util.List;\n\npublic class OpenToonzStrokeEngine {\n\n    // --- Model: OpenToonz TThickPoint ---\n    public static class ThickPoint {\n        public float x, y;\n        public float thick;\n\n        public ThickPoint(float x, float y, float thick) {\n            this.x = x;\n            this.y = y;\n            this.thick = thick;\n        }\n    }\n\n    // --- Model: OpenToonz TThickQuadratic Bézier Chunk ---\n    public static class QuadraticChunk {\n        public ThickPoint p0;\n        public ThickPoint p1; // Control point / handle\n        public ThickPoint p2;\n\n        public QuadraticChunk(ThickPoint p0, ThickPoint p1, ThickPoint p2) {\n            this.p0 = p0;\n            this.p1 = p1;\n            this.p2 = p2;\n        }\n    }\n\n    // --- Core Engine: OpenToonz TStroke ---\n    public static class StrokeEngine {\n        private final List<ThickPoint> controlPoints = new ArrayList<ThickPoint>();\n        private final List<QuadraticChunk> chunks = new ArrayList<QuadraticChunk>();\n\n        public void clear() {\n            controlPoints.clear();\n            chunks.clear();\n        }\n\n        public void addRawPoint(float x, float y, float pressure) {\n            // Map stylus pressure to thickness (default fallback 12px)\n            float thickness = (pressure > 0f) ? Math.max(6f, pressure * 28f) : 12f;\n            controlPoints.add(new ThickPoint(x, y, thickness));\n        }\n\n        // Simplifies raw input down to key OpenToonz control nodes\n        public void finalizeStroke() {\n            if (controlPoints.size() < 3) return;\n\n            List<ThickPoint> simplified = new ArrayList<ThickPoint>();\n            simplified.add(controlPoints.get(0));\n\n            int step = Math.max(2, controlPoints.size() / 8);\n            for (int i = step; i < controlPoints.size() - 1; i += step) {\n                simplified.add(controlPoints.get(i));\n            }\n            simplified.add(controlPoints.get(controlPoints.size() - 1));\n\n            controlPoints.clear();\n            controlPoints.addAll(simplified);\n            rebuildChunks();\n        }\n\n        // Converts control points into smooth quadratic Bézier curves\n        public void rebuildChunks() {\n            chunks.clear();\n            int count = controlPoints.size();\n            if (count < 2) return;\n\n            if (count == 2) {\n                ThickPoint p0 = controlPoints.get(0);\n                ThickPoint p1 = controlPoints.get(1);\n                ThickPoint mid = new ThickPoint((p0.x + p1.x) / 2f, (p0.y + p1.y) / 2f, (p0.thick + p1.thick) / 2f);\n                chunks.add(new QuadraticChunk(p0, mid, p1));\n                return;\n            }\n\n            for (int i = 0; i < count - 1; i++) {\n                ThickPoint p0 = controlPoints.get(i);\n                ThickPoint p2 = controlPoints.get(i + 1);\n                ThickPoint p1 = new ThickPoint((p0.x + p2.x) / 2f, (p0.y + p2.y) / 2f, (p0.thick + p2.thick) / 2f);\n                chunks.add(new QuadraticChunk(p0, p1, p2));\n            }\n        }\n\n        public List<ThickPoint> getControlPoints() {\n            return controlPoints;\n        }\n\n        public List<QuadraticChunk> getChunks() {\n            return chunks;\n        }\n\n        public void updatePoint(int index, float x, float y) {\n            if (index >= 0 && index < controlPoints.size()) {\n                ThickPoint pt = controlPoints.get(index);\n                pt.x = x;\n                pt.y = y;\n                rebuildChunks();\n            }\n        }\n    }\n}\n''')\n\np.write_text(s)
+
+# Insert the user's supplied OpenToonz stroke-engine code verbatim as a reusable Java engine.
+engine_path = Path("build-source/app/src/main/java/com/smitnk/motioncanvas/drawing/OpenToonzStrokeEngine.java")
+engine_path.parent.mkdir(parents=True, exist_ok=True)
+engine_path.write_text(r'''package com.smitnk.motioncanvas.drawing;
+
+import android.graphics.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+public class OpenToonzStrokeEngine {
+
+    // --- Model: OpenToonz TThickPoint ---
+    public static class ThickPoint {
+        public float x, y;
+        public float thick;
+
+        public ThickPoint(float x, float y, float thick) {
+            this.x = x;
+            this.y = y;
+            this.thick = thick;
+        }
+    }
+
+    // --- Model: OpenToonz TThickQuadratic Bézier Chunk ---
+    public static class QuadraticChunk {
+        public ThickPoint p0;
+        public ThickPoint p1; // Control point / handle
+        public ThickPoint p2;
+
+        public QuadraticChunk(ThickPoint p0, ThickPoint p1, ThickPoint p2) {
+            this.p0 = p0;
+            this.p1 = p1;
+            this.p2 = p2;
+        }
+    }
+
+    // --- Core Engine: OpenToonz TStroke ---
+    public static class StrokeEngine {
+        private final List<ThickPoint> controlPoints = new ArrayList<ThickPoint>();
+        private final List<QuadraticChunk> chunks = new ArrayList<QuadraticChunk>();
+
+        public void clear() {
+            controlPoints.clear();
+            chunks.clear();
+        }
+
+        public void addRawPoint(float x, float y, float pressure) {
+            // Map stylus pressure to thickness (default fallback 12px)
+            float thickness = (pressure > 0f) ? Math.max(6f, pressure * 28f) : 12f;
+            controlPoints.add(new ThickPoint(x, y, thickness));
+        }
+
+        // Simplifies raw input down to key OpenToonz control nodes
+        public void finalizeStroke() {
+            if (controlPoints.size() < 3) return;
+
+            List<ThickPoint> simplified = new ArrayList<ThickPoint>();
+            simplified.add(controlPoints.get(0));
+
+            int step = Math.max(2, controlPoints.size() / 8);
+            for (int i = step; i < controlPoints.size() - 1; i += step) {
+                simplified.add(controlPoints.get(i));
+            }
+            simplified.add(controlPoints.get(controlPoints.size() - 1));
+
+            controlPoints.clear();
+            controlPoints.addAll(simplified);
+            rebuildChunks();
+        }
+
+        // Converts control points into smooth quadratic Bézier curves
+        public void rebuildChunks() {
+            chunks.clear();
+            int count = controlPoints.size();
+            if (count < 2) return;
+
+            if (count == 2) {
+                ThickPoint p0 = controlPoints.get(0);
+                ThickPoint p1 = controlPoints.get(1);
+                ThickPoint mid = new ThickPoint((p0.x + p1.x) / 2f, (p0.y + p1.y) / 2f, (p0.thick + p1.thick) / 2f);
+                chunks.add(new QuadraticChunk(p0, mid, p1));
+                return;
+            }
+
+            for (int i = 0; i < count - 1; i++) {
+                ThickPoint p0 = controlPoints.get(i);
+                ThickPoint p2 = controlPoints.get(i + 1);
+                ThickPoint p1 = new ThickPoint((p0.x + p2.x) / 2f, (p0.y + p2.y) / 2f, (p0.thick + p2.thick) / 2f);
+                chunks.add(new QuadraticChunk(p0, p1, p2));
+            }
+        }
+
+        public List<ThickPoint> getControlPoints() {
+            return controlPoints;
+        }
+
+        public List<QuadraticChunk> getChunks() {
+            return chunks;
+        }
+
+        public void updatePoint(int index, float x, float y) {
+            if (index >= 0 && index < controlPoints.size()) {
+                ThickPoint pt = controlPoints.get(index);
+                pt.x = x;
+                pt.y = y;
+                rebuildChunks();
+            }
+        }
+    }
+}
+''')
+
+p.write_text(s)
 print("V29 MainActivity repair + diagnostics applied")
